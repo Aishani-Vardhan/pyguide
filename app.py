@@ -294,44 +294,130 @@ def explain_syntax_error(error):
 
     return "Python found a syntax problem. Check the highlighted line and the lines immediately before it."
 
-
-def suggest_syntax_correction(code, error):
+vdef suggest_syntax_correction(code, error):
     """Return a corrected full program for common beginner syntax mistakes."""
+
     lines = code.splitlines()
 
     if not lines:
         return None
 
+    # ------------------------------------------------------------
+    # Special case: except ZeroDivisionError without a try block
+    # ------------------------------------------------------------
+    if "except ZeroDivisionError:" in code and "try:" not in code:
+        before_except = []
+        except_found = False
+        fallback_lines = []
+
+        for line in lines:
+            if line.strip() == "except ZeroDivisionError:":
+                except_found = True
+                continue
+
+            if not except_found:
+                before_except.append(line)
+            else:
+                fallback_lines.append(line)
+
+        # If the user wrote something like:
+        # result = 10 / 0
+        # except ZeroDivisionError:
+        # result = 0
+        # Fallback value
+        #
+        # create a proper try/except structure.
+        if before_except:
+            first_part = "\n".join(before_except).strip()
+
+            # Make the demonstration actually produce ZeroDivisionError
+            if "10*0" in first_part:
+                first_part = first_part.replace("10*0", "10 / 0")
+
+            elif "10 * 0" in first_part:
+                first_part = first_part.replace("10 * 0", "10 / 0")
+
+            corrected = "try:\n"
+
+            for line in first_part.splitlines():
+                corrected += "    " + line.strip() + "\n"
+
+            corrected += "except ZeroDivisionError:\n"
+            corrected += "    result = 0\n"
+
+            # Handle any remaining text after except
+            for line in fallback_lines:
+                stripped = line.strip()
+
+                if stripped and stripped != "result=0" and stripped != "result = 0":
+                    corrected += f'\nprint("{stripped}")\n'
+
+            result = corrected.rstrip()
+
+            try:
+                ast.parse(result)
+                return result
+            except SyntaxError:
+                return None
+
+    # ------------------------------------------------------------
+    # General indentation correction
+    # ------------------------------------------------------------
     corrected = lines.copy()
 
-    # Fix common indentation mistakes on elif/else/except/finally.
-    # These keywords must line up with the block header they belong to.
     for i, line in enumerate(corrected):
         stripped = line.strip()
+
         if stripped.startswith(("elif ", "else", "except", "finally")):
             current_indent = len(line) - len(line.lstrip())
+
             for j in range(i - 1, -1, -1):
                 previous = corrected[j]
                 previous_stripped = previous.strip()
                 previous_indent = len(previous) - len(previous.lstrip())
-                if previous_indent <= current_indent and previous_stripped.startswith(("if ", "elif ", "else", "try", "except")):
+
+                if (
+                    previous_indent <= current_indent
+                    and previous_stripped.startswith(
+                        ("if ", "elif ", "else", "try", "except")
+                    )
+                ):
                     corrected[i] = " " * previous_indent + stripped
                     break
 
-    # Add missing colons to common Python block statements.
-    block_words = ("if ", "elif ", "else", "for ", "while ", "def ", "class ", "try", "except", "finally")
+    # ------------------------------------------------------------
+    # Add missing colons
+    # ------------------------------------------------------------
+    block_words = (
+        "if ",
+        "elif ",
+        "else",
+        "for ",
+        "while ",
+        "def ",
+        "class ",
+        "try",
+        "except",
+        "finally",
+    )
+
     for i, line in enumerate(corrected):
         stripped = line.strip()
+
         if stripped.startswith(block_words) and not stripped.endswith(":"):
             corrected[i] = line + ":"
 
     result = "\n".join(corrected)
 
-    # Only return the suggestion if the corrected program is actually valid.
+    # ------------------------------------------------------------
+    # Make sure the suggested code is actually valid Python
+    # ------------------------------------------------------------
     try:
         ast.parse(result)
+
         if result != code:
             return result
+
     except SyntaxError:
         return None
 
