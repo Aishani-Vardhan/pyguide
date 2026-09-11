@@ -294,7 +294,7 @@ def explain_syntax_error(error):
 
     return "Python found a syntax problem. Check the highlighted line and the lines immediately before it."
 
-vdef suggest_syntax_correction(code, error):
+ def suggest_syntax_correction(code, error):
     """Return a corrected full program for common beginner syntax mistakes."""
 
     lines = code.splitlines()
