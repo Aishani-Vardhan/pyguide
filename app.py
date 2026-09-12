@@ -1284,7 +1284,7 @@ st.markdown("---")
 st.markdown(
     """
     <div style="text-align:center; font-size:14px;">
-        <b>Team PyGuide</b><br><br>
+        <b>Team Scriptforge</b><br><br>
         P Aishani Vardhan · Founder & Team Lead<br>
         Sannidhi Shetty · Co-Creator & Pitch Lead<br>
         B. Naga Harshitha · Developer<br>
