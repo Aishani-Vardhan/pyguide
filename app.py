@@ -4,6 +4,8 @@ import subprocess
 import sys
 import re
 import base64
+import builtins
+import difflib
 
 # ============================================================
 # PyGuide - Free AI Coding Helper Prototype
@@ -17,7 +19,7 @@ st.set_page_config(
 )
 
 # ----------------------------
-# Styling
+# Styling — ORIGINAL DESIGN
 # ----------------------------
 st.markdown(
     """
@@ -30,7 +32,8 @@ st.markdown(
     [data-testid="stHeader"] {
         background: #07152f;
     }
-        /* 🍀 Falling clover background */
+
+    /* 🍀 Falling clover background */
     .clover-rain {
         position: fixed;
         inset: 0;
@@ -66,21 +69,11 @@ st.markdown(
     .clover-rain span:nth-child(14) { left: 94%; animation-duration: 20s; animation-delay: -1s; }
 
     @keyframes clover-fall {
-        0% {
-            transform: translate3d(0, -10vh, 0) rotate(0deg);
-        }
-        25% {
-            transform: translate3d(18px, 28vh, 0) rotate(80deg);
-        }
-        50% {
-            transform: translate3d(-15px, 55vh, 0) rotate(180deg);
-        }
-        75% {
-            transform: translate3d(20px, 82vh, 0) rotate(270deg);
-        }
-        100% {
-            transform: translate3d(-10px, 110vh, 0) rotate(360deg);
-        }
+        0% { transform: translate3d(0, -10vh, 0) rotate(0deg); }
+        25% { transform: translate3d(18px, 28vh, 0) rotate(80deg); }
+        50% { transform: translate3d(-15px, 55vh, 0) rotate(180deg); }
+        75% { transform: translate3d(20px, 82vh, 0) rotate(270deg); }
+        100% { transform: translate3d(-10px, 110vh, 0) rotate(360deg); }
     }
 
     [data-testid="stAppViewContainer"] > .main {
@@ -146,6 +139,27 @@ st.markdown(
         border-radius: 12px;
         padding: 14px;
         color: #ffe0e7;
+    }
+
+    .suggestion-box {
+        background: #102957;
+        border: 2px solid #b7ff26;
+        border-radius: 12px;
+        padding: 14px;
+        margin-top: 14px;
+    }
+
+    .suggestion-title {
+        color: #b7ff26;
+        font-weight: 800;
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 16px;
+    }
+
+    .suggestion-subtitle {
+        color: #dceeff;
+        margin-top: 5px;
+        font-size: 14px;
     }
 
     .small-label {
@@ -236,13 +250,18 @@ st.markdown(
         opacity: 1 !important;
     }
 
-    textarea { font-family: Consolas, "Courier New", monospace !important; }
+    textarea {
+        font-family: Consolas, "Courier New", monospace !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# 🍀 Falling clovers
+# ============================================================
+# Falling clovers — ORIGINAL
+# ============================================================
+
 st.markdown(
     """
     <div class="clover-rain" aria-hidden="true">
@@ -254,313 +273,10 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-# ----------------------------
-# Helper functions
-# ----------------------------
-def explain_syntax_error(error):
-    message = str(error.msg).lower()
 
-    if "expected ':'" in message:
-        return (
-            "Python expected a colon (:). "
-            "Statements such as if, elif, else, for, while, def and class "
-            "normally need a colon at the end."
-        )
-
-    if "expected an indented block" in message:
-        return (
-            "Python found a line that should contain an indented block. "
-            "After statements such as if, for, while or def, the next line "
-            "needs to be indented."
-        )
-
-    if "invalid syntax" in message:
-        return (
-            "Python could not understand this line. "
-            "Check brackets, quotes, colons and spelling around the highlighted line."
-        )
-
-    if "unterminated string" in message:
-        return (
-            "A string was started with a quote but Python could not find "
-            "the matching closing quote."
-        )
-
-    if "unexpected indent" in message:
-        return (
-            "This line has more indentation than Python expects. "
-            "Check the spaces at the beginning of the line."
-        )
-
-    return "Python found a syntax problem. Check the highlighted line and the lines immediately before it."
-
-
-def _verified_program(candidate):
-    """Return candidate only when Python can parse and execute it successfully."""
-    try:
-        ast.parse(candidate)
-    except SyntaxError:
-        return None
-
-    # Programs containing input() cannot be fully executed non-interactively.
-    # For those, syntax validation is the safe verification available here.
-    if re.search(r"\binput\s*\(", candidate):
-        return candidate
-
-    stdout, stderr, returncode = run_python_code(candidate)
-    if returncode == 0:
-        return candidate
-    return None
-
-
-def suggest_syntax_correction(code, error):
-    """Return a complete corrected program only when the correction is verified."""
-    if not code.strip():
-        return None
-
-    # Work on the complete program so multiple beginner mistakes can be fixed
-    # together instead of returning only the line containing the first error.
-    lines = code.splitlines()
-    corrected = lines.copy()
-
-    # Common beginner typo: t("...") when asking the user for input.
-    for i, line in enumerate(corrected):
-        corrected[i] = re.sub(
-            r'^(\s*[A-Za-z_]\w*\s*=\s*)t(\s*\()',
-            r'\1input\2',
-            corrected[i],
-        )
-
-    # Repair a very common malformed f-string where a simple variable inside
-    # { } is missing its closing brace, e.g. {name Welcome -> {name} Welcome.
-    for i, line in enumerate(corrected):
-        if 'f"' in line or "f'" in line:
-            def close_simple_f_expression(match):
-                variable = match.group(1)
-                return '{' + variable + '} ' + match.group(2)
-
-            corrected[i] = re.sub(
-                r'\{([A-Za-z_]\w*)\s+([^{}]+?)(?=["\']\s*\)?\s*$)',
-                close_simple_f_expression,
-                corrected[i],
-            )
-
-    # Add missing colons to common block statements.
-    block_words = (
-        "if ", "elif ", "else", "for ", "while ", "def ", "class ",
-        "try", "except", "finally", "with ", "match ", "case "
-    )
-    for i, line in enumerate(corrected):
-        stripped = line.strip()
-        if stripped.startswith(block_words) and not stripped.endswith(":"):
-            corrected[i] = line.rstrip() + ":"
-
-    # Repair simple indentation errors.
-    for i, line in enumerate(corrected):
-        stripped = line.strip()
-        if stripped.startswith(("elif ", "else", "except", "finally")) and i > 0:
-            previous = corrected[i - 1]
-            previous_indent = len(previous) - len(previous.lstrip())
-            corrected[i] = " " * previous_indent + stripped
-
-    result = "\n".join(corrected)
-
-    # If the first-pass correction is valid and executable, use it.
-    verified = _verified_program(result)
-    if verified and verified != code:
-        return verified
-
-    # Handle missing closing delimiters.
-    try:
-        ast.parse(result)
-    except SyntaxError as current_error:
-        message = str(getattr(current_error, "msg", "")).lower()
-        if "was never closed" in message:
-            stack = []
-            quote = None
-            escaped = False
-            for ch in result:
-                if escaped:
-                    escaped = False
-                    continue
-                if ch == "\\":
-                    escaped = True
-                    continue
-                if quote:
-                    if ch == quote:
-                        quote = None
-                    continue
-                if ch in ("'", '"'):
-                    quote = ch
-                elif ch in "([{":
-                    stack.append(ch)
-                elif ch in ")]}":
-                    matching = {")": "(", "]": "[", "}": "{"}
-                    if stack and stack[-1] == matching[ch]:
-                        stack.pop()
-            if stack:
-                closing = {"(": ")", "[": "]", "{": "}"}[stack[-1]]
-                verified = _verified_program(result + closing)
-                if verified and verified != code:
-                    return verified
-
-    return None
-
-
-def explain_runtime_error(error_text):
-    text = error_text.lower()
-
-    if "indexerror" in text:
-        return (
-            "You tried to access a position that does not exist in a list. "
-            "Think of a list like numbered boxes: if there are only 3 boxes, "
-            "you cannot open box number 6."
-        )
-
-    if "nameerror" in text:
-        return (
-            "Python cannot find the variable or function name you used. "
-            "Check its spelling and make sure you created it before using it."
-        )
-
-    if "typeerror" in text:
-        return (
-            "Python received a value of the wrong type. "
-            "For example, adding text directly to a number can cause this."
-        )
-
-    if "zerodivisionerror" in text:
-        return (
-            "A number is being divided by zero. "
-            "Check the denominator before performing the division."
-        )
-
-    if "keyerror" in text:
-        return (
-            "You tried to access a dictionary key that does not exist. "
-            "Check the key name or use a safer lookup."
-        )
-
-    if "indentationerror" in text:
-        return (
-            "Python found an indentation problem. "
-            "Make sure related lines use consistent indentation."
-        )
-
-    return (
-        "Your program ran into a runtime error. "
-        "Read the last line of the error first; it usually tells you what went wrong."
-    )
-
-
-def suggest_runtime_correction(code, error_text):
-    """Return a complete runtime-corrected program only when verified."""
-    name_match = re.search(r"name ['\"]([^'\"]+)['\"] is not defined", error_text or "")
-    if not name_match:
-        return None
-
-    name = name_match.group(1)
-    try:
-        tree = ast.parse(code)
-    except SyntaxError:
-        return None
-
-    # Do not invent a value for an undefined function call.
-    if any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == name
-        for node in ast.walk(tree)
-    ):
-        return None
-
-    lines = code.splitlines()
-    insert_at = 0
-    while insert_at < len(lines):
-        stripped = lines[insert_at].strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith(("import ", "from ")):
-            insert_at += 1
-            continue
-        break
-
-    candidate = "\n".join(lines[:insert_at] + [f"{name} = 0"] + lines[insert_at:])
-    return _verified_program(candidate)
-
-
-def check_logic(code):
-    # Simple prototype rules, not a full AI logic analyser.
-    if re.search(r"\btotal\s*=\s*price\s*\*\s*quantity\b", code):
-        return {
-            "found": True,
-            "title": "Possible accumulation error",
-            "hint": "Are you replacing total each time instead of adding each item's price?",
-            "fix": "total += price * quantity",
-            "explanation": (
-                "If you calculate a total inside a loop, using = replaces the "
-                "old total. Using += keeps the old total and adds the new amount."
-            ),
-        }
-
-    if re.search(r"\bif\s+\w+\s*=\s*[^=]", code):
-        return {
-            "found": True,
-            "title": "Possible condition error",
-            "hint": "Inside an if condition, did you mean to compare two values?",
-            "fix": "Use == when you want to compare two values.",
-            "explanation": (
-                "A single = is normally used to assign a value. "
-                "A double == is used to compare values."
-            ),
-        }
-
-    if "average" in code.lower() and re.search(r"average\s*=\s*[^/\n]+$", code, re.MULTILINE):
-        return {
-            "found": True,
-            "title": "Possible average calculation issue",
-            "hint": "An average normally needs both a total and the number of values.",
-            "fix": "average = total / count",
-            "explanation": "Check that you divide the total by the number of values.",
-        }
-
-    return {
-        "found": False,
-        "title": "No common logic error detected",
-        "hint": "The prototype did not detect one of its known patterns.",
-        "fix": "",
-        "explanation": (
-            "This free prototype checks a few common mistakes. "
-            "It does not understand every possible program logic problem."
-        ),
-    }
-
-
-def suggest_logic_correction(code, result):
-    """Return the full program with a simple detected logic mistake corrected."""
-    if not result.get("found"):
-        return None
-
-    lines = code.splitlines()
-
-    for i, line in enumerate(lines):
-        if re.search(r"\btotal\s*=\s*price\s*\*\s*quantity\b", line):
-            indent = line[:len(line) - len(line.lstrip())]
-            lines[i] = indent + "total += price * quantity"
-            return "\n".join(lines)
-
-    for i, line in enumerate(lines):
-        if re.search(r"\bif\s+\w+\s*=\s*[^=]", line):
-            lines[i] = re.sub(r"(\bif\s+\w+)\s*=\s*", r"\1 == ", line)
-            return "\n".join(lines)
-
-    if "average" in code.lower():
-        for i, line in enumerate(lines):
-            if re.match(r"^\s*average\s*=", line):
-                indent = line[:len(line) - len(line.lstrip())]
-                lines[i] = indent + "average = total / count"
-                return "\n".join(lines)
-
-    return None
-
+# ============================================================
+# Python execution
+# ============================================================
 
 def run_python_code(code):
     try:
@@ -570,408 +286,1081 @@ def run_python_code(code):
             text=True,
             timeout=5,
         )
-
         return result.stdout, result.stderr, result.returncode
-
     except subprocess.TimeoutExpired:
         return "", "Execution stopped because it took longer than 5 seconds.", -1
-
     except Exception as exc:
         return "", str(exc), -1
 
 
-def check_pseudocode(text):
-    """Validate common beginner pseudocode structure before conversion."""
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    if not lines:
-        return None
-    if lines[0].upper() != "START":
-        return {"message": "Pseudocode must start with exactly START.", "hint": "Put START as the first non-empty line."}
-    if lines[-1].upper() != "END":
-        return {"message": f"{lines[-1]} is invalid. Use exactly END.", "hint": "Your pseudocode must finish with END."}
-    for i,line in enumerate(lines[1:-1],2):
-        u=line.upper()
-        if u == "START": return {"message": f"START is in the wrong place (line {i}).", "hint": "START should appear only first."}
-        if u == "END": return {"message": f"END is in the wrong place (line {i}).", "hint": "END should appear only last."}
-        if (u.startswith(("IF ","ELSE IF ","ELSE"))) and line.endswith(":"):
-            return {"message": f"Python-style ':' found on line {i}.", "hint": "Pseudocode conditions do not need a colon."}
-        if u == "IF" or u == "ELSE IF":
-            return {"message": f"Incomplete condition on line {i}.", "hint": "Add a condition, for example: IF age >= 18."}
-        if u.startswith("ELSE "):
-            return {"message": f"Invalid ELSE statement on line {i}.", "hint": "Use ELSE by itself, or write a complete ELSE IF condition."}
-        for k in ("TAKE","INPUT","READ","DISPLAY","PRINT","OUTPUT","ADD","SUBTRACT","MULTIPLY","DIVIDE","STORE","SET","ASSIGN"):
-            if u == k:
-                return {"message": f"Incomplete {k} statement on line {i}.", "hint": "Add the value or action that this statement should use."}
-    return None
+# ============================================================
+# Syntax explanation
+# ============================================================
 
+def explain_syntax_error(error):
+    message = str(getattr(error, "msg", "")).lower()
 
-def convert_pseudocode(text):
-    lower = text.lower().strip()
-
-    # Example: two numbers and addition
-    if (
-        ("two numbers" in lower or ("number" in lower and "number" in lower))
-        and ("add" in lower or "sum" in lower)
-    ):
-        code = """a = int(input("Enter first number: "))
-b = int(input("Enter second number: "))
-
-result = a + b
-
-print(result)"""
-
-        explanation = (
-            "• Take two numbers → input() with int()\n"
-            "• Add the numbers → result = a + b\n"
-            "• Display the result → print(result)"
+    if "'(' was never closed" in message or "was never closed" in message:
+        return (
+            "A bracket, parenthesis or curly brace was opened but Python "
+            "could not find its closing partner."
         )
-        return code, explanation
 
-    # If / else
-    if "if" in lower and "else" in lower:
-        code = """number = int(input("Enter a number: "))
-
-if number > 0:
-    print("Positive")
-else:
-    print("Not positive")"""
-
-        explanation = (
-            "• IF becomes Python's if statement.\n"
-            "• ELSE becomes Python's else statement.\n"
-            "• The condition ends with a colon (:).\n"
-            "• The code inside each block is indented."
+    if "expected ':'" in message:
+        return (
+            "Python expected a colon (:). Statements such as if, elif, else, "
+            "for, while, def, class, try and with normally need a colon at the end."
         )
-        return code, explanation
 
-    # Simple loop
-    if "repeat" in lower or "loop" in lower:
-        code = """for i in range(5):
-    print(i)"""
-
-        explanation = (
-            "• REPEAT/LOOP becomes a for loop.\n"
-            "• range(5) creates five loop iterations.\n"
-            "• The repeated statement is indented."
+    if "expected an indented block" in message:
+        return (
+            "Python found the start of a block, but the code inside that "
+            "block is missing or is not indented."
         )
-        return code, explanation
 
-    # Display
-    if "display" in lower or "print" in lower:
-        code = 'print("Hello")'
-        explanation = "• DISPLAY becomes Python's print() function."
-        return code, explanation
+    if "unexpected indent" in message:
+        return (
+            "This line has more indentation than Python expects. "
+            "Check the spaces at the beginning of the line."
+        )
+
+    if "unindent does not match" in message:
+        return (
+            "The indentation does not match the surrounding block. "
+            "Use consistent indentation, normally 4 spaces."
+        )
+
+    if "unterminated string" in message or "eol while scanning string" in message:
+        return (
+            "A string was started with a quote, but Python could not find "
+            "the matching closing quote."
+        )
+
+    if "invalid syntax" in message:
+        return (
+            "Python could not understand the structure of this line. "
+            "Check brackets, quotes, commas, operators and colons."
+        )
 
     return (
-        "# PyGuide could not recognise this pseudocode pattern yet.\n"
-        "# Try using words such as START, input, add, display, if, else, or repeat.",
-        "This prototype currently supports a few common pseudocode patterns.",
+        "Python found a syntax problem. Check the highlighted line and "
+        "the line immediately before it."
     )
 
 
+# ============================================================
+# Runtime explanation
+# ============================================================
+
+def explain_runtime_error(error_text):
+    text = (error_text or "").lower()
+
+    if "nameerror" in text:
+        return (
+            "Python cannot find the variable, function or name you used. "
+            "Make sure it is defined before use and check its spelling."
+        )
+
+    if "typeerror" in text:
+        return (
+            "Python received a value of the wrong type. For example, "
+            "text and a number cannot always be combined directly."
+        )
+
+    if "valueerror" in text:
+        return (
+            "Python received the right kind of object, but the value itself "
+            "is not acceptable for this operation."
+        )
+
+    if "indexerror" in text:
+        return (
+            "You tried to access a list or sequence position that does not "
+            "exist. Check the valid index range."
+        )
+
+    if "keyerror" in text:
+        return (
+            "You tried to access a dictionary key that does not exist. "
+            "Check the key or use .get()."
+        )
+
+    if "attributeerror" in text:
+        return (
+            "The object does not have the attribute or method you tried to "
+            "use. Check the object's type and spelling."
+        )
+
+    if "zerodivisionerror" in text:
+        return (
+            "A number is being divided by zero. Check the denominator "
+            "before performing the division."
+        )
+
+    if "modulenotfounderror" in text:
+        return (
+            "Python could not find the module you tried to import. "
+            "Check the module name and installation."
+        )
+
+    if "importerror" in text:
+        return (
+            "Python found the module, but it could not import the requested item."
+        )
+
+    if "filenotfounderror" in text:
+        return (
+            "Python tried to open a file that does not exist at the specified path."
+        )
+
+    if "recursionerror" in text:
+        return (
+            "A function kept calling itself too deeply. Check its stopping condition."
+        )
+
+    if "indentationerror" in text:
+        return (
+            "Python found an indentation problem. Make sure lines in the "
+            "same block use consistent indentation."
+        )
+
+    return (
+        "Your program encountered a runtime error. Read the final line of "
+        "the error first; it usually tells you what went wrong."
+    )
+
+
+# ============================================================
+# Undefined-name analysis
+# ============================================================
+
+PYTHON_BUILTINS = set(dir(builtins)) | {
+    "True", "False", "None", "NotImplemented", "Ellipsis"
+}
+
+
+def _bound_names_in_target(target):
+    names = set()
+    if isinstance(target, ast.Name):
+        names.add(target.id)
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for elt in target.elts:
+            names.update(_bound_names_in_target(elt))
+    elif isinstance(target, ast.Starred):
+        names.update(_bound_names_in_target(target.value))
+    return names
+
+
+def collect_global_definitions(tree):
+    """Names that exist in the program/module namespace."""
+    defined = set()
+
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                defined.update(_bound_names_in_target(target))
+        elif isinstance(node, ast.AnnAssign):
+            defined.update(_bound_names_in_target(node.target))
+        elif isinstance(node, ast.AugAssign):
+            defined.update(_bound_names_in_target(node.target))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            defined.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                defined.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(node, ast.For):
+            defined.update(_bound_names_in_target(node.target))
+        elif isinstance(node, ast.With):
+            for item in node.items:
+                if item.optional_vars:
+                    defined.update(_bound_names_in_target(item.optional_vars))
+
+    return defined
+
+
+def find_undefined_names(code):
+    """Find likely NameError variables without flagging Python builtins."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+
+    module_defined = collect_global_definitions(tree)
+    findings = []
+
+    # Make a conservative visitor. This focuses on names referenced at module
+    # level, which catches the judge-demo case print(y) without pretending
+    # static analysis can prove every dynamic Python program.
+    class Analyzer(ast.NodeVisitor):
+        def __init__(self, outer_defined):
+            self.scope_stack = [set(outer_defined)]
+            self.in_function = 0
+            self.local_names_stack = []
+
+        def current_defined(self):
+            result = set()
+            for scope in self.scope_stack:
+                result.update(scope)
+            return result
+
+        def visit_Name(self, node):
+            if isinstance(node.ctx, ast.Load):
+                name = node.id
+                if (
+                    name not in self.current_defined()
+                    and name not in PYTHON_BUILTINS
+                ):
+                    findings.append((name, getattr(node, "lineno", None)))
+            elif isinstance(node.ctx, ast.Store):
+                self.scope_stack[-1].add(node.id)
+
+        def visit_Import(self, node):
+            for alias in node.names:
+                self.scope_stack[-1].add(alias.asname or alias.name.split(".")[0])
+
+        def visit_ImportFrom(self, node):
+            for alias in node.names:
+                self.scope_stack[-1].add(alias.asname or alias.name)
+
+        def visit_FunctionDef(self, node):
+            # Function name is already visible in current scope.
+            self.scope_stack[-1].add(node.name)
+
+            local_defs = set()
+            for arg in node.args.posonlyargs:
+                local_defs.add(arg.arg)
+            for arg in node.args.args:
+                local_defs.add(arg.arg)
+            for arg in node.args.kwonlyargs:
+                local_defs.add(arg.arg)
+            if node.args.vararg:
+                local_defs.add(node.args.vararg.arg)
+            if node.args.kwarg:
+                local_defs.add(node.args.kwarg.arg)
+
+            # Defaults are evaluated in outer scope.
+            for default in node.args.defaults:
+                self.visit(default)
+            for default in node.args.kw_defaults:
+                if default:
+                    self.visit(default)
+
+            self.scope_stack.append(local_defs)
+            for child in node.body:
+                self.visit(child)
+            self.scope_stack.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_ClassDef(self, node):
+            self.scope_stack[-1].add(node.name)
+            for base in node.bases:
+                self.visit(base)
+            for keyword in node.keywords:
+                self.visit(keyword.value)
+            self.scope_stack.append(set(module_defined))
+            for child in node.body:
+                self.visit(child)
+            self.scope_stack.pop()
+
+    Analyzer(module_defined).visit(tree)
+
+    unique = []
+    seen = set()
+    for name, line in findings:
+        if name not in seen:
+            seen.add(name)
+            unique.append((name, line))
+
+    return unique
+
+
+def nearest_defined_name(code, missing):
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+
+    defined = sorted(collect_global_definitions(tree))
+    matches = difflib.get_close_matches(missing, defined, n=1, cutoff=0.55)
+    return matches[0] if matches else None
+
+
+def replace_name_safely(code, wrong, right):
+    candidate = re.sub(rf"\b{re.escape(wrong)}\b", right, code)
+    try:
+        ast.parse(candidate)
+        return candidate
+    except SyntaxError:
+        return None
+
+
+# ============================================================
+# Syntax correction / suggestion box
+# ============================================================
+
+def auto_close_delimiter(code):
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    reverse = {v: k for k, v in pairs.items()}
+    stack = []
+    quote = None
+    escaped = False
+
+    for ch in code:
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch in pairs:
+            stack.append(ch)
+        elif ch in reverse:
+            if stack and stack[-1] == reverse[ch]:
+                stack.pop()
+            else:
+                return None
+
+    if quote or not stack:
+        return None
+
+    candidate = code + "".join(pairs[x] for x in reversed(stack))
+    try:
+        ast.parse(candidate)
+        return candidate
+    except SyntaxError:
+        return None
+
+
+def add_missing_colons(code):
+    lines = []
+    changed = False
+    pattern = re.compile(
+        r"^(\s*)(if|elif|else|for|while|def|class|try|except|finally|with|match|case)\b"
+    )
+
+    for line in code.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and pattern.match(line):
+            if not stripped.endswith(":"):
+                line = line.rstrip() + ":"
+                changed = True
+        lines.append(line)
+
+    if not changed:
+        return None
+
+    candidate = "\n".join(lines)
+    try:
+        ast.parse(candidate)
+        return candidate
+    except SyntaxError:
+        return None
+
+
+def fix_common_mistakes(code):
+    candidates = []
+
+    fixed = auto_close_delimiter(code)
+    if fixed:
+        candidates.append(fixed)
+
+    fixed = add_missing_colons(code)
+    if fixed:
+        candidates.append(fixed)
+
+    # t(...) -> input(...) beginner typo
+    fixed = re.sub(
+        r"(^|\n)(\s*[A-Za-z_]\w*\s*=\s*)t(\s*\()",
+        r"\1\2input\3",
+        code,
+    )
+    if fixed != code:
+        try:
+            ast.parse(fixed)
+            candidates.append(fixed)
+        except SyntaxError:
+            pass
+
+    # Combined fixes
+    working = code
+    for _ in range(3):
+        new = add_missing_colons(working) or working
+        new = auto_close_delimiter(new) or new
+        if new == working:
+            break
+        working = new
+
+    if working != code:
+        try:
+            ast.parse(working)
+            candidates.append(working)
+        except SyntaxError:
+            pass
+
+    for candidate in candidates:
+        try:
+            ast.parse(candidate)
+            if candidate != code:
+                return candidate
+        except SyntaxError:
+            pass
+
+    return None
+
+
+# ============================================================
+# Logic checker
+# ============================================================
+
+
+# Backward-compatible name used by the UI
+suggest_syntax_correction = fix_common_mistakes
+
+
+def check_logic(code):
+    results = []
+
+    lines = code.splitlines()
+
+    for i, line in enumerate(lines, 1):
+        if re.search(r"\bif\s+\w+\s*=\s*[^=]", line):
+            results.append({
+                "title": "Possible condition error",
+                "message": (
+                    "A single = assigns a value. If you want to compare values "
+                    "inside an if statement, you normally need ==."
+                ),
+                "line": i,
+            })
+
+        if re.search(r"\btotal\s*=\s*price\s*\*\s*quantity\b", line):
+            results.append({
+                "title": "Possible accumulation error",
+                "message": (
+                    "If this is inside a loop, = replaces the previous total. "
+                    "You may need += to keep adding each item."
+                ),
+                "line": i,
+            })
+
+    if re.search(r"\baverage\s*=", code) and not re.search(r"\btotal\s*/\s*count\b", code):
+        results.append({
+            "title": "Possible average calculation issue",
+            "message": "An average normally needs the total divided by the number of values.",
+            "line": None,
+        })
+
+    return results
+
+
+def suggest_logic_correction(code, results):
+    lines = code.splitlines()
+
+    for result in results:
+        line_no = result.get("line")
+        if line_no and 1 <= line_no <= len(lines):
+            line = lines[line_no - 1]
+
+            if "condition" in result["title"].lower():
+                lines[line_no - 1] = re.sub(
+                    r"(\bif\s+\w+)\s*=\s*",
+                    r"\1 == ",
+                    line,
+                )
+
+            elif "accumulation" in result["title"].lower():
+                indent = line[:len(line) - len(line.lstrip())]
+                lines[line_no - 1] = indent + "total += price * quantity"
+
+    if any("average" in x["title"].lower() for x in results):
+        for i, line in enumerate(lines):
+            if re.match(r"^\s*average\s*=", line):
+                indent = line[:len(line) - len(line.lstrip())]
+                lines[i] = indent + "average = total / count"
+                break
+
+    candidate = "\n".join(lines)
+    try:
+        ast.parse(candidate)
+        return candidate
+    except SyntaxError:
+        return None
+
+
+# ============================================================
+# Pseudocode validation
+# ============================================================
+
+def normalize_pseudocode(text):
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not text:
+        return ""
+
+    lines = [x.strip() for x in text.splitlines() if x.strip()]
+
+    # Recover common pasted one-line pseudocode.
+    if len(lines) == 1:
+        s = lines[0]
+        keywords = [
+            "END FUNCTION", "END WHILE", "END FOR", "END IF", "END LOOP",
+            "ELSE IF", "START", "END", "ELSE", "IF", "FOR", "WHILE",
+            "REPEAT", "FUNCTION", "RETURN", "BREAK", "CONTINUE", "PASS",
+            "INPUT", "READ", "OUTPUT", "DISPLAY", "PRINT", "SET", "STORE",
+            "ASSIGN", "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE",
+        ]
+        for keyword in sorted(keywords, key=len, reverse=True):
+            s = re.sub(
+                rf"\s+(?={re.escape(keyword)}\b)",
+                "\n",
+                s,
+                flags=re.IGNORECASE,
+            )
+        lines = [x.strip() for x in s.splitlines() if x.strip()]
+
+    return "\n".join(lines)
+
+
+def check_pseudocode(text):
+    normalized = normalize_pseudocode(text)
+    lines = [x.strip() for x in normalized.splitlines() if x.strip()]
+
+    if not lines:
+        return {"error": "Please enter pseudocode first.", "normalized": normalized}
+
+    if lines[0].upper() != "START":
+        return {
+            "error": "Pseudocode must start with START.",
+            "hint": "Put START as the first non-empty line.",
+            "normalized": normalized,
+        }
+
+    if lines[-1].upper() != "END":
+        return {
+            "error": "Your pseudocode is missing the final END.",
+            "hint": f"The last instruction is: {lines[-1]}",
+            "normalized": normalized,
+        }
+
+    stack = []
+
+    for i, line in enumerate(lines[1:-1], start=2):
+        u = line.upper().strip()
+
+        if u == "START":
+            return {"error": f"START is in the wrong position on line {i}.", "normalized": normalized}
+
+        if u == "END":
+            return {"error": f"END appears too early on line {i}.", "normalized": normalized}
+
+        if u.startswith("IF "):
+            condition = line[3:].strip()
+            if not condition or condition == ":":
+                return {"error": f"IF is incomplete on line {i}.", "hint": "Example: IF age >= 18", "normalized": normalized}
+            if line.rstrip().endswith(":"):
+                return {"error": f"Do not use a Python colon on pseudocode line {i}.", "hint": "Write IF age >= 18, not IF age >= 18:", "normalized": normalized}
+            stack.append(("IF", i))
+            continue
+
+        if u.startswith("ELSE IF "):
+            if not stack or stack[-1][0] != "IF":
+                return {"error": f"ELSE IF on line {i} has no matching IF.", "normalized": normalized}
+            continue
+
+        if u == "ELSE":
+            if not stack or stack[-1][0] != "IF":
+                return {"error": f"ELSE on line {i} has no matching IF.", "normalized": normalized}
+            continue
+
+        if u.startswith("FOR "):
+            if u == "FOR":
+                return {"error": f"FOR is incomplete on line {i}.", "normalized": normalized}
+            stack.append(("FOR", i))
+            continue
+
+        if u.startswith("WHILE "):
+            if len(u) <= 6:
+                return {"error": f"WHILE is incomplete on line {i}.", "normalized": normalized}
+            stack.append(("WHILE", i))
+            continue
+
+        if u.startswith("REPEAT"):
+            if not re.match(r"REPEAT\s+.+\s+TIMES?$", u):
+                return {
+                    "error": f"REPEAT is incomplete on line {i}.",
+                    "hint": "Example: REPEAT 5 TIMES",
+                    "normalized": normalized,
+                }
+            stack.append(("REPEAT", i))
+            continue
+
+        if u.startswith("FUNCTION "):
+            if not re.match(r"FUNCTION\s+[A-Za-z_]\w*\s*\(.*\)$", line, re.I):
+                return {
+                    "error": f"FUNCTION is incomplete on line {i}.",
+                    "hint": "Example: FUNCTION add(a, b)",
+                    "normalized": normalized,
+                }
+            stack.append(("FUNCTION", i))
+            continue
+
+        if u in {"END IF", "ENDIF"}:
+            if not stack or stack[-1][0] != "IF":
+                return {"error": f"END IF on line {i} does not match the current block.", "normalized": normalized}
+            stack.pop()
+            continue
+
+        if u in {"END FOR", "ENDFOR"}:
+            if not stack or stack[-1][0] != "FOR":
+                return {"error": f"END FOR on line {i} does not match the current block.", "normalized": normalized}
+            stack.pop()
+            continue
+
+        if u in {"END WHILE", "ENDWHILE"}:
+            if not stack or stack[-1][0] != "WHILE":
+                return {"error": f"END WHILE on line {i} does not match the current block.", "normalized": normalized}
+            stack.pop()
+            continue
+
+        if u in {"END REPEAT", "ENDREPEAT", "END LOOP", "ENDLOOP"}:
+            if not stack or stack[-1][0] not in {"REPEAT"}:
+                return {"error": f"End marker on line {i} does not match the current block.", "normalized": normalized}
+            stack.pop()
+            continue
+
+        if u in {"END FUNCTION", "ENDFUNCTION"}:
+            if not stack or stack[-1][0] != "FUNCTION":
+                return {"error": f"END FUNCTION on line {i} does not match the current block.", "normalized": normalized}
+            stack.pop()
+            continue
+
+        # Reject empty commands.
+        for key in ["INPUT", "READ", "TAKE", "OUTPUT", "DISPLAY", "PRINT", "SET", "STORE", "ASSIGN", "ADD", "SUBTRACT", "MULTIPLY", "DIVIDE", "RETURN"]:
+            if u == key:
+                return {
+                    "error": f"Incomplete {key} statement on line {i}.",
+                    "hint": "Add the value or operation required by the instruction.",
+                    "normalized": normalized,
+                }
+
+    if stack:
+        block, start_line = stack[-1]
+        expected = {
+            "IF": "END IF",
+            "FOR": "END FOR",
+            "WHILE": "END WHILE",
+            "REPEAT": "END REPEAT",
+            "FUNCTION": "END FUNCTION",
+        }[block]
+        return {
+            "error": f"{block} started on line {start_line} was not closed.",
+            "hint": f"Add {expected} before the final END.",
+            "normalized": normalized,
+        }
+
+    return {"error": None, "normalized": normalized}
+
+
+# ============================================================
+# Pseudocode converter
+# ============================================================
+
+def convert_pseudocode(text):
+    normalized = normalize_pseudocode(text)
+    lines = [x.strip() for x in normalized.splitlines() if x.strip()]
+
+    output = []
+    notes = []
+    indent = 0
+
+    for i, original in enumerate(lines, 1):
+        u = original.upper().strip()
+
+        if u in {"START", "END"}:
+            continue
+
+        # Closers
+        if u in {
+            "END IF", "ENDIF", "END FOR", "ENDFOR", "END WHILE", "ENDWHILE",
+            "END REPEAT", "ENDREPEAT", "END LOOP", "ENDLOOP",
+            "END FUNCTION", "ENDFUNCTION",
+        }:
+            indent = max(0, indent - 1)
+            continue
+
+        # ELSE IF
+        if u.startswith("ELSE IF "):
+            indent = max(0, indent - 1)
+            output.append("    " * indent + "elif " + original[8:].strip() + ":")
+            indent += 1
+            notes.append(f"Line {i}: ELSE IF → elif")
+            continue
+
+        # ELSE
+        if u == "ELSE":
+            indent = max(0, indent - 1)
+            output.append("    " * indent + "else:")
+            indent += 1
+            notes.append(f"Line {i}: ELSE → else")
+            continue
+
+        # IF
+        if u.startswith("IF "):
+            output.append("    " * indent + "if " + original[3:].strip() + ":")
+            indent += 1
+            notes.append(f"Line {i}: IF → if")
+            continue
+
+        # FOR variable FROM start TO end
+        m = re.match(r"FOR\s+([A-Za-z_]\w*)\s+FROM\s+(.+?)\s+TO\s+(.+)$", original, re.I)
+        if m:
+            var, start, end = m.groups()
+            output.append("    " * indent + f"for {var} in range({start}, ({end}) + 1):")
+            indent += 1
+            notes.append(f"Line {i}: FOR FROM TO → range()")
+            continue
+
+        # FOR variable IN iterable
+        m = re.match(r"FOR\s+([A-Za-z_]\w*)\s+IN\s+(.+)$", original, re.I)
+        if m:
+            var, seq = m.groups()
+            output.append("    " * indent + f"for {var} in {seq}:")
+            indent += 1
+            notes.append(f"Line {i}: FOR IN → for")
+            continue
+
+        # WHILE
+        if u.startswith("WHILE "):
+            output.append("    " * indent + "while " + original[6:].strip() + ":")
+            indent += 1
+            notes.append(f"Line {i}: WHILE → while")
+            continue
+
+        # REPEAT n TIMES
+        m = re.match(r"REPEAT\s+(.+?)\s+TIMES?$", original, re.I)
+        if m:
+            count = m.group(1).strip()
+            output.append("    " * indent + f"for _ in range({count}):")
+            indent += 1
+            notes.append(f"Line {i}: REPEAT → for/range")
+            continue
+
+        # FUNCTION name(args)
+        m = re.match(r"FUNCTION\s+([A-Za-z_]\w*)\s*\((.*?)\)$", original, re.I)
+        if m:
+            name, args = m.groups()
+            output.append("    " * indent + f"def {name}({args}):")
+            indent += 1
+            notes.append(f"Line {i}: FUNCTION → def")
+            continue
+
+        # INPUT
+        m = re.match(r"(?:INPUT|READ|TAKE)\s+(.+)$", original, re.I)
+        if m:
+            var = m.group(1).strip()
+            if re.fullmatch(r"[A-Za-z_]\w*", var):
+                output.append("    " * indent + f"{var} = input()")
+            else:
+                output.append("    " * indent + f"input({var})")
+            notes.append(f"Line {i}: INPUT → input()")
+            continue
+
+        # OUTPUT/DISPLAY/PRINT
+        m = re.match(r"(?:OUTPUT|DISPLAY|PRINT)\s+(.+)$", original, re.I)
+        if m:
+            value = m.group(1).strip()
+            output.append("    " * indent + f"print({value})")
+            notes.append(f"Line {i}: OUTPUT/DISPLAY → print()")
+            continue
+
+        # SET / STORE / ASSIGN
+        m = re.match(r"(?:SET|STORE|ASSIGN)\s+([A-Za-z_]\w*)\s*=\s*(.+)$", original, re.I)
+        if m:
+            var, value = m.groups()
+            output.append("    " * indent + f"{var} = {value}")
+            notes.append(f"Line {i}: SET → assignment")
+            continue
+
+        # ADD
+        m = re.match(r"ADD\s+(.+?)\s+AND\s+(.+)$", original, re.I)
+        if m:
+            a, b = m.groups()
+            output.append("    " * indent + f"result = {a} + {b}")
+            notes.append(f"Line {i}: ADD → +")
+            continue
+
+        # SUBTRACT a FROM b
+        m = re.match(r"SUBTRACT\s+(.+?)\s+FROM\s+(.+)$", original, re.I)
+        if m:
+            a, b = m.groups()
+            output.append("    " * indent + f"result = {b} - {a}")
+            notes.append(f"Line {i}: SUBTRACT FROM → -")
+            continue
+
+        # MULTIPLY
+        m = re.match(r"MULTIPLY\s+(.+?)\s+(?:BY|AND)\s+(.+)$", original, re.I)
+        if m:
+            a, b = m.groups()
+            output.append("    " * indent + f"result = {a} * {b}")
+            notes.append(f"Line {i}: MULTIPLY → *")
+            continue
+
+        # DIVIDE
+        m = re.match(r"DIVIDE\s+(.+?)\s+BY\s+(.+)$", original, re.I)
+        if m:
+            a, b = m.groups()
+            output.append("    " * indent + f"result = {a} / {b}")
+            notes.append(f"Line {i}: DIVIDE BY → /")
+            continue
+
+        # RETURN/BREAK/CONTINUE/PASS
+        if re.match(r"RETURN\s+.+", original, re.I):
+            output.append("    " * indent + "return " + original[6:].strip())
+            notes.append(f"Line {i}: RETURN → return")
+            continue
+
+        if u == "BREAK":
+            output.append("    " * indent + "break")
+            continue
+
+        if u == "CONTINUE":
+            output.append("    " * indent + "continue")
+            continue
+
+        if u == "PASS":
+            output.append("    " * indent + "pass")
+            continue
+
+        # IMPORT
+        if u.startswith("IMPORT "):
+            output.append("    " * indent + original[7:].strip())
+            notes.append(f"Line {i}: IMPORT → import")
+            continue
+
+        # Direct Python escape
+        if u.startswith("PYTHON:"):
+            output.append("    " * indent + original.split(":", 1)[1].strip())
+            notes.append(f"Line {i}: PYTHON → direct Python")
+            continue
+
+        # Comments
+        if original.startswith("#"):
+            output.append("    " * indent + original)
+            continue
+
+        # Unknown instruction — deliberately mark it instead of silently saying converted.
+        output.append("    " * indent + f"# TODO: review pseudocode: {original}")
+        notes.append(f"Line {i}: unrecognised instruction — review required")
+
+    generated = "\n".join(output).strip()
+
+    if not generated:
+        return "", "No convertible instructions were found."
+
+    try:
+        ast.parse(generated)
+    except SyntaxError as error:
+        return (
+            generated,
+            "Generated Python still needs review near line "
+            f"{getattr(error, 'lineno', '?')}."
+        )
+
+    return generated, "\n".join(notes)
+
+
+# ============================================================
+# Code explanation
+# ============================================================
 
 def explain_code(code):
-    """Create a beginner-friendly explanation of the code."""
     if not code.strip():
-        return "There is no code in the editor yet. Paste some Python code and ask me again."
+        return "There is no code in the editor yet. Paste some Python code first."
 
     try:
         tree = ast.parse(code)
     except SyntaxError as error:
-        line = getattr(error, "lineno", "?")
         return (
-            f" I cannot fully explain the program yet because Python found a syntax "
-            f"problem around line {line}.\n\n"
-            f" **In simple words:** {explain_syntax_error(error)}"
+            f"Python found a syntax problem around line {getattr(error, 'lineno', '?')}.\n\n"
+            f"{explain_syntax_error(error)}"
         )
 
     explanations = []
 
+    undefined = find_undefined_names(code)
+    if undefined:
+        explanations.append(
+            "• Possible undefined name(s): " + ", ".join(f"`{n}`" for n, _ in undefined)
+        )
+
     for node in tree.body:
         if isinstance(node, ast.Assign):
-            targets = []
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    targets.append(target.id)
-            if targets:
-                explanations.append(
-                    f"• **{', '.join(targets)}** is being created and given a value."
-                )
-
-        elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
-            if isinstance(node.value.func, ast.Name):
-                if node.value.func.id == "print":
-                    explanations.append("• `print()` displays information on the screen.")
+                    explanations.append(f"• `{target.id}` is created and assigned a value.")
 
         elif isinstance(node, ast.If):
-            explanations.append(
-                "• **if** checks a condition. If the condition is true, its indented code runs."
-            )
+            explanations.append("• `if` checks a condition and chooses which block should run.")
             if node.orelse:
-                explanations.append(
-                    "• **else** gives Python another path when the `if` condition is false."
-                )
+                explanations.append("• `else`/another branch provides an alternate path.")
 
         elif isinstance(node, (ast.For, ast.While)):
-            explanations.append(
-                "• This is a **loop**, so Python repeats the indented code."
-            )
+            explanations.append("• This is a loop, so Python repeats a block of instructions.")
 
-        elif isinstance(node, ast.FunctionDef):
-            explanations.append(
-                f"• **{node.name}()** is a function. It groups instructions so they can be reused."
-            )
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            explanations.append(f"• `{node.name}()` is a function that groups reusable instructions.")
 
         elif isinstance(node, ast.Return):
             explanations.append("• `return` sends a value back from a function.")
 
-        elif isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom):
-            explanations.append("• This line imports tools/modules that the program can use.")
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            explanations.append("• This imports a module or tool the program can use.")
 
-    # Add a simple whole-program description.
-    has_input = "input(" in code
-    has_print = "print(" in code
-    has_if = re.search(r"\bif\b", code) is not None
-    has_loop = re.search(r"\b(for|while)\b", code) is not None
-
-    summary_parts = []
-    if has_input:
-        summary_parts.append("takes input from the user")
-    if has_if:
-        summary_parts.append("makes a decision with a condition")
-    if has_loop:
-        summary_parts.append("repeats instructions with a loop")
-    if has_print:
-        summary_parts.append("shows output on the screen")
-
-    summary = ""
-    if summary_parts:
-        summary = " **What your program does:** It " + ", ".join(summary_parts) + ".\n\n"
+        elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+            if isinstance(node.value.func, ast.Name) and node.value.func.id == "print":
+                explanations.append("• `print()` displays information in the output.")
+            elif isinstance(node.value.func, ast.Name) and node.value.func.id == "input":
+                explanations.append("• `input()` gets text from the user.")
 
     if not explanations:
-        explanations.append(
-            "• The code is syntactically valid, but this prototype does not yet have "
-            "a special explanation rule for every Python construct."
-        )
+        explanations.append("• The code is syntactically valid, but this prototype does not have a special explanation for every Python construct.")
 
-    return summary + "\n".join(explanations)
+    return "\n".join(explanations)
 
 
-def get_correct_code(code):
-    """Return a corrected full program for simple syntax mistakes."""
-    if not code.strip():
-        return None, None
-
-    try:
-        ast.parse(code)
-        return code, "Your code already has valid basic Python syntax."
-    except SyntaxError as error:
-        correction = suggest_syntax_correction(code, error)
-        if correction:
-            return correction, f"PyGuide corrected the syntax problem near line {error.lineno}."
-        return None, (
-            f"PyGuide found a syntax problem near line {getattr(error, 'lineno', '?')}, "
-            "but this prototype cannot automatically rewrite that particular error yet."
-        )
-
+# ============================================================
+# Chat
+# ============================================================
 
 def chat_response(question, code):
     q = question.lower().strip()
 
-    # Explicit code-explanation requests come first.
-    if any(phrase in q for phrase in [
-        "explain my code",
-        "explain this code",
-        "explain the code",
-        "what does my code do",
-        "what does this code do",
-        "explain my program",
-        "explain this program",
-        "how does my code work",
-    ]):
+    if not q:
+        return "Type a question first."
+
+    if any(x in q for x in ["explain my code", "explain this code", "what does my code do", "explain my program"]):
         return explain_code(code)
 
-    if any(phrase in q for phrase in [
-        "correct my code",
-        "fix my code",
-        "give me the correct code",
-        "show correct code",
-        "show me the correct code",
-    ]):
-        corrected, message = get_correct_code(code)
-        if corrected:
-            return (
-                " **Correct Code**\n\n"
-                f"{message}\n\n"
-                "The corrected version is shown below."
-            )
-        return f" {message}"
+    if any(x in q for x in ["correct my code", "fix my code", "give me the correct code", "show correct code"]):
+        try:
+            ast.parse(code)
+        except SyntaxError as error:
+            correction = suggest_syntax_correction(code)
+            if correction:
+                return f"### Correct Code\n\n{correction}"
+            return explain_syntax_error(error)
 
-    if "indexerror" in q or ("list" in q and ("error" in q or "wrong" in q)):
-        return (
-            "###  Let's understand it\n\n"
-            "`IndexError` means Python tried to access a position in a list "
-            "that does not exist. For example, a list with 3 items has indexes "
-            "`0`, `1`, and `2`, so asking for index `5` causes this error.\n\n"
-            "**What to check:** Look at the index you are using and make sure "
-            "it is within the list's valid range.\n\n"
-            " **Tip:** Print the list and check how many items it contains."
-        )
+        undefined = find_undefined_names(code)
+        if undefined:
+            name, line = undefined[0]
+            nearest = nearest_defined_name(code, name)
+            if nearest:
+                candidate = replace_name_safely(code, name, nearest)
+                if candidate:
+                    return f"`{name}` may be a typo. I found `{nearest}` already defined.\n\n```python\n{candidate}\n```"
+            return f"`{name}` is not defined. Define it before using it."
+
+        logic = check_logic(code)
+        if logic:
+            corrected = suggest_logic_correction(code, logic)
+            if corrected:
+                return f"{logic[0]['message']}\n\n```python\n{corrected}\n```"
+            return logic[0]["message"]
+
+        return "I did not find a problem that this prototype can safely auto-correct."
+
+    if "nameerror" in q or "undefined" in q:
+        return "A NameError means Python cannot find the name you used. Make sure the variable or function is defined before it is used."
 
     if "syntax" in q or "colon" in q:
-        return (
-            "###  Let's understand it\n\n"
-            "A **syntax error** means Python cannot understand the structure of "
-            "your code. For example, `if`, `for`, `while`, `def`, and `else` "
-            "usually need a `:` at the end because it tells Python that a new "
-            "block of code is starting.\n\n"
-            " **Tip:** Check the line Python points to and the line immediately "
-            "before it, because the actual mistake can sometimes be just above."
-        )
-
-    if "nameerror" in q:
-        return (
-            "###  Let's understand it\n\n"
-            "`NameError` usually means Python found a name it does not know. "
-            "This often happens when a variable has not been created yet or "
-            "its spelling does not match.\n\n"
-            "For example, if you create `name` but later write `nmae`, Python "
-            "treats them as different names.\n\n"
-            " **What to check:** Make sure the variable is defined before you "
-            "use it and that its spelling is exactly the same."
-        )
+        return "A syntax error means Python cannot understand the structure of the code. Check brackets, quotes, indentation, commas and colons."
 
     if "indent" in q:
-        return (
-            "###  Let's understand it\n\n"
-            "**Indentation** means the spaces at the beginning of a line. "
-            "Python uses indentation to know which instructions belong to the "
-            "same block.\n\n"
-            "For example, the indented code under an `if` statement runs only "
-            "when that condition is true. Consistent indentation, usually "
-            "4 spaces, helps Python understand the program's structure."
-        )
+        return "Indentation tells Python which lines belong to the same block. Use consistent indentation, usually 4 spaces."
 
-    if "if" in q or "else" in q:
-        return (
-            "###  Let's understand it\n\n"
-            "`if` lets a program make a decision based on a condition. "
-            "If the condition is true, Python runs the indented code under `if`. "
-            "If it is false and an `else` exists, Python runs the `else` block.\n\n"
-            "For example, `if age >= 18:` checks a condition before deciding "
-            "which instructions to run.\n\n"
-            "**In short:** condition → choose which block of code runs."
-        )
-
-    if "loop" in q or "for" in q or "while" in q:
-        return (
-            "###  Let's understand it\n\n"
-            "A **loop** repeats instructions so you do not have to write the "
-            "same code again and again. A `for` loop commonly goes through a "
-            "sequence one item at a time. A `while` loop keeps repeating while "
-            "its condition is true.\n\n"
-            " **Tip:** Think of a loop as a controlled repetition of a block of code."
-        )
-
-    if "print" in q:
-        return (
-            "###  Let's understand it\n\n"
-            "`print()` tells Python to display information in the program's "
-            "output. For example, `print(\'Hello\')` displays `Hello`.\n\n"
-            "It can also display values stored in variables, which makes it "
-            "useful for seeing results while your program runs."
-        )
+    if "loop" in q:
+        return "A loop repeats instructions. `for` commonly iterates through a sequence; `while` repeats while a condition is true."
 
     if "input" in q:
-        return (
-            "###  Let's understand it\n\n"
-            "`input()` allows the user to enter information while the program "
-            "is running. For example, `name = input(\'Your name: \')` stores "
-            "what the user types in `name`.\n\n"
-            "One important point: `input()` normally gives the answer as text. "
-            "If you need a number, you can use `int(input(...))` to convert it."
-        )
+        return "`input()` gets text from the user. Use `int(input())` when you need an integer."
 
-    if "what is wrong" in q or "my code" in q or "this code" in q:
-        if code.strip():
-            try:
-                ast.parse(code)
-                logic_result = check_logic(code)
-                if logic_result["found"]:
-                    return (
-                        " Your code has valid basic syntax.\n\n"
-                        f" **Possible logic issue:** {logic_result['hint']}\n\n"
-                        f" **Possible fix:** `{logic_result['fix']}`"
-                    )
-                return (
-                    " Your code has valid basic syntax.\n\n"
-                    "I did not detect one of the common logic patterns in this prototype. "
-                    "Try asking **Explain my code** for a beginner-friendly walkthrough."
-                )
-            except SyntaxError as error:
-                return (
-                    f" I found a syntax problem around line {error.lineno}.\n\n"
-                    f" **Simple explanation:** {explain_syntax_error(error)}\n\n"
-                    " Start by checking that line and the line immediately before it."
-                )
+    if "print" in q:
+        return "`print()` displays information in the program output."
 
-    return (
-        "###  Let's figure it out\n\n"
-        "Ask me a Python question and I’ll explain the idea in clear, "
-        "student-friendly language without skipping the important concept.\n\n"
-        "I can help with variables, lists, `if`/`else`, loops, `input()`, "
-        "`print()`, syntax errors, runtime errors, and more.\n\n"
-        "You can also ask **Explain my code** for a step-by-step walkthrough."
+    return "Ask about Python syntax, runtime errors, variables, lists, conditions, loops, functions, input, output, or your code."
+
+
+# ============================================================
+# Header — ORIGINAL logo, fixed HTML rendering
+# ============================================================
+
+try:
+    with open("pyguide_logo.png", "rb") as f:
+        logo_base64 = base64.b64encode(f.read()).decode()
+
+    header_html = f'''
+<div class="pyguide-title" style="display:flex; align-items:center; gap:15px;">
+    <img src="data:image/png;base64,{logo_base64}" width="60">
+    <span>PyGuide</span>
+</div>
+'''
+
+    st.markdown(header_html, unsafe_allow_html=True)
+
+except FileNotFoundError:
+    st.markdown(
+        '<div class="pyguide-title">PyGuide</div>',
+        unsafe_allow_html=True,
     )
 
-# ============================================================
-# Header
-# ============================================================
-with open("pyguide_logo.png", "rb") as f:
-    logo_base64 = base64.b64encode(f.read()).decode()
-
 st.markdown(
-    f'''
-    <div class="pyguide-title" style="display:flex; align-items:center; gap:15px;">
-        <img src="data:image/png;base64,{logo_base64}" width="60">
-        <span>PyGuide</span>
-    </div>
-    ''',
-    unsafe_allow_html=True
+    '<div class="pyguide-subtitle">Interactive Debugging Assistant</div>',
+    unsafe_allow_html=True,
 )
 
+
 # ============================================================
-# Main navigation
+# Main navigation — ORIGINAL TABS
 # ============================================================
+
 tab1, tab2, tab3 = st.tabs(
     [" AI Debugger", " Pseudocode → Python", " Projects"]
 )
 
+
 # ============================================================
 # AI DEBUGGER
 # ============================================================
+
 with tab1:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("###  Your Python Code")
+        st.markdown("### Your Python Code")
 
         code = st.text_area(
             "Code editor",
             value="",
-            placeholder="Write or paste your Python code here...",
+            placeholder="Try: print(y)",
             height=430,
             label_visibility="collapsed",
-            key="code_editor_v2",
+            key="code_editor_v3",
         )
 
     with col2:
-        st.markdown("###  PyGuide Assistant")
+        st.markdown("### PyGuide Assistant")
 
         st.info(
-            "PyGuide checks your code, gives a hint first, and then helps you understand the problem."
+            "PyGuide checks syntax, possible undefined names, runtime errors, "
+            "and common logic mistakes."
         )
 
         analyze_col, logic_col, run_col = st.columns(3)
@@ -980,142 +1369,192 @@ with tab1:
             analyze = st.button(
                 " Analyze",
                 use_container_width=True,
-                key="analyze_button",
+                key="analyze_button_v3",
             )
 
         with logic_col:
             logic = st.button(
                 " Check Logic",
                 use_container_width=True,
-                key="logic_button",
+                key="logic_button_v3",
             )
 
         with run_col:
             run = st.button(
                 "▶️ Run",
                 use_container_width=True,
-                key="run_button",
+                key="run_button_v3",
             )
 
+        # ====================================================
+        # ANALYZE
+        # ====================================================
         if analyze:
             if not code.strip():
                 st.warning("Please enter some Python code first.")
             else:
                 try:
-                    tree = ast.parse(code)
-                    st.success(" No basic syntax error found.")
-
-                    stdout, stderr, returncode = run_python_code(code)
-
-                    if returncode != 0 and stderr.strip():
-                        st.error(" Runtime Error")
-                        st.markdown(
-                            f'<div class="error-box"><b>Problem:</b> {stderr.strip()}</div>',
-                            unsafe_allow_html=True,
-                        )
-                        st.markdown("###  Simple explanation")
-                        st.write(explain_runtime_error(stderr))
-
-                        runtime_correction = suggest_runtime_correction(code, stderr)
-                        if runtime_correction:
-                            st.markdown("###  Suggested Correct Code")
-                            st.success("PyGuide fixed the runtime error and verified that this complete program runs without an error.")
-                            st.code(runtime_correction, language="python")
-                            st.caption("This box contains only the complete corrected Python program.")
-                        else:
-                            st.info("PyGuide found the runtime error, but it cannot safely generate a verified full-code correction for this particular error yet.")
-                    elif tree.body:
-                        logic_result_for_analyze = check_logic(code)
-                        if logic_result_for_analyze["found"]:
-                            st.warning(f" {logic_result_for_analyze['title']}")
-                            st.markdown(
-                                f'<div class="hint-box"><b> Hint:</b> '
-                                f'{logic_result_for_analyze["hint"]}</div>',
-                                unsafe_allow_html=True,
-                            )
-                            corrected_analyze = suggest_logic_correction(
-                                code, logic_result_for_analyze
-                            )
-                            if corrected_analyze:
-                                st.markdown("###  Suggested Correct Code")
-                                st.code(corrected_analyze, language="python")
-                                st.caption("This box contains only the complete corrected Python program.")
-                            else:
-                                st.info("PyGuide detected a possible logic issue, but it cannot safely generate a verified full-code correction for it.")
-                        else:
-                            st.markdown(
-                                '<div class="info-box"> Syntax looks good. '
-                                'Now try <b>Check Logic</b> or <b>Run</b>.</div>',
-                                unsafe_allow_html=True,
-                            )
+                    ast.parse(code)
                 except SyntaxError as error:
-                    st.error(" SyntaxError")
+                    st.error(" Syntax Error")
 
                     line = getattr(error, "lineno", "?")
                     column = getattr(error, "offset", "?")
 
                     st.markdown(
-                        f'<div class="error-box"><b>Problem:</b> {error.msg}<br>'
-                        f'<b>Line:</b> {line} &nbsp; <b>Position:</b> {column}</div>',
+                        f'''<div class="error-box">
+                        <b>Problem:</b> {error.msg}<br>
+                        <b>Line:</b> {line} &nbsp;
+                        <b>Position:</b> {column}
+                        </div>''',
                         unsafe_allow_html=True,
                     )
 
-                    st.markdown(
-                        f'<div class="hint-box"><b> Hint:</b> '
-                        f'Look carefully at line {line}. '
-                        f"Try to find what Python's grammar is expecting.</div>",
-                        unsafe_allow_html=True,
-                    )
-
-                    st.markdown("###  Simple explanation")
+                    st.markdown("###  Simple Explanation")
                     st.write(explain_syntax_error(error))
 
-                    correction = suggest_syntax_correction(code, error)
+                    correction = suggest_syntax_correction(code)
 
                     if correction:
-                        st.markdown("###  Suggested Correct Code")
-                        st.success("PyGuide found a corrected version and verified that it runs without an error.")
-                        st.code(correction, language="python")
-                        st.caption(
-                            "This box contains only the complete corrected Python program."
+                        st.markdown(
+                            '''<div class="suggestion-box">
+                            <div class="suggestion-title">✓ SUGGESTION BOX — FULL FIX PREVIEW</div>
+                            <div class="suggestion-subtitle">Only a syntactically valid corrected program is shown here.</div>
+                            </div>''',
+                            unsafe_allow_html=True,
                         )
+                        st.code(correction, language="python")
                     else:
                         st.info(
-                            "PyGuide found the error, but it cannot safely generate a verified full-code correction for this particular mistake yet."
+                            "PyGuide found the error, but it cannot safely generate a complete automatic correction for this particular mistake."
                         )
 
-                    with st.expander("Technical error"):
-                        st.code(str(error))
+                else:
+                    undefined = find_undefined_names(code)
 
+                    if undefined:
+                        name, line = undefined[0]
+                        st.error(" Undefined Name Detected")
+
+                        st.markdown(
+                            f'''<div class="error-box">
+                            <b>Problem:</b> <code>{name}</code> is used but has not been defined.<br>
+                            <b>Line:</b> {line or "unknown"}
+                            </div>''',
+                            unsafe_allow_html=True,
+                        )
+
+                        st.markdown("###  Simple Explanation")
+                        st.write(
+                            f"Python does not know what `{name}` means yet. "
+                            "Define it before using it, or check whether you meant another variable name."
+                        )
+
+                        nearest = nearest_defined_name(code, name)
+
+                        if nearest:
+                            candidate = replace_name_safely(code, name, nearest)
+                        else:
+                            candidate = None
+
+                        st.markdown(
+                            '''<div class="suggestion-box">
+                            <div class="suggestion-title">✓ SUGGESTION BOX — FULL FIX PREVIEW</div>
+                            <div class="suggestion-subtitle">PyGuide only suggests a name replacement when it finds a likely existing variable.</div>
+                            </div>''',
+                            unsafe_allow_html=True,
+                        )
+
+                        if candidate:
+                            st.code(candidate, language="python")
+                            st.caption(f"Suggested correction: `{name}` → `{nearest}`")
+                        else:
+                            st.info(
+                                f"No safe replacement was found for `{name}`. "
+                                f"Define `{name}` before using it."
+                            )
+
+                    else:
+                        logic_results = check_logic(code)
+
+                        if logic_results:
+                            st.warning(f" {logic_results[0]['title']}")
+
+                            st.markdown(
+                                f'''<div class="hint-box"><b>Hint:</b> {logic_results[0]["message"]}</div>''',
+                                unsafe_allow_html=True,
+                            )
+
+                            corrected = suggest_logic_correction(
+                                code,
+                                logic_results,
+                            )
+
+                            if corrected:
+                                st.markdown(
+                                    '''<div class="suggestion-box">
+                                    <div class="suggestion-title">✓ SUGGESTION BOX — FULL FIX PREVIEW</div>
+                                    <div class="suggestion-subtitle">PyGuide corrected the detected logic pattern.</div>
+                                    </div>''',
+                                    unsafe_allow_html=True,
+                                )
+                                st.code(corrected, language="python")
+
+                        else:
+                            st.success(" No basic syntax or undefined-name error found.")
+                            st.markdown(
+                                '''<div class="success-box">
+                                Your code passed syntax and undefined-name checks.
+                                </div>''',
+                                unsafe_allow_html=True,
+                            )
+
+        # ====================================================
+        # CHECK LOGIC
+        # ====================================================
         elif logic:
             if not code.strip():
                 st.warning("Please enter some Python code first.")
             else:
-                result = check_logic(code)
-
-                if result["found"]:
-                    st.warning(f" {result['title']}")
-
-                    st.markdown(
-                        f'<div class="hint-box"><b> Hint:</b> '
-                        f'{result["hint"]}</div>',
-                        unsafe_allow_html=True,
-                    )
-
-                    st.markdown("###  Suggested Correct Code")
-                    corrected_logic = suggest_logic_correction(code, result)
-                    if corrected_logic:
-                        st.code(corrected_logic, language="python")
-                        st.caption("Replace the incorrect code with this corrected version if it matches your intended logic.")
-                    else:
-                        st.code(result["fix"], language="python")
-
-                    st.markdown("###  Why?")
-                    st.write(result["explanation"])
+                try:
+                    ast.parse(code)
+                except SyntaxError as error:
+                    st.error(" Fix the syntax error first.")
+                    st.write(explain_syntax_error(error))
                 else:
-                    st.success(" No common logic error detected.")
-                    st.write(result["explanation"])
+                    undefined = find_undefined_names(code)
 
+                    if undefined:
+                        st.error(" Undefined name(s) found")
+                        for name, line in undefined:
+                            st.write(
+                                f"`{name}` on line {line or '?'} is used before PyGuide can find a definition."
+                            )
+                    else:
+                        results = check_logic(code)
+
+                        if results:
+                            for result in results:
+                                st.warning(f" {result['title']}")
+                                st.write(result["message"])
+
+                            corrected = suggest_logic_correction(code, results)
+
+                            if corrected:
+                                st.markdown(
+                                    '''<div class="suggestion-box">
+                                    <div class="suggestion-title">✓ SUGGESTION BOX — FULL FIX PREVIEW</div>
+                                    </div>''',
+                                    unsafe_allow_html=True,
+                                )
+                                st.code(corrected, language="python")
+                        else:
+                            st.success(" No common logic error detected.")
+                            st.write("Try Run to test the program with Python itself.")
+                            
+        # ====================================================
+        # RUN
+        # ====================================================
         elif run:
             if not code.strip():
                 st.warning("Please enter some Python code first.")
@@ -1123,54 +1562,82 @@ with tab1:
                 try:
                     ast.parse(code)
                 except SyntaxError as error:
-                    st.error(
-                        " The program cannot run because it has a syntax error."
-                    )
+                    st.error(" The program cannot run because it contains a syntax error.")
                     st.write(explain_syntax_error(error))
                 else:
-                    stdout, stderr, returncode = run_python_code(code)
+                    undefined = find_undefined_names(code)
 
-                    if returncode == 0:
-                        st.success(" Program finished successfully.")
-
-                        if stdout.strip():
-                            st.markdown("###  Output")
-                            st.code(stdout, language="text")
-                        else:
-                            st.info("The program ran, but it did not print any output.")
-
-                    else:
-                        st.error(" Runtime error")
-
-                        error_text = stderr.strip() or stdout.strip()
-
-                        st.markdown(
-                            '<div class="hint-box"><b> Hint:</b> '
-                            'Read the last part of the error first. '
-                            'It usually gives the most useful clue.</div>',
-                            unsafe_allow_html=True,
+                    if undefined:
+                        st.error(" Cannot run: undefined name(s)")
+                        for name, line in undefined:
+                            st.write(
+                                f"`{name}` is used on line {line or '?'} but is not defined."
+                            )
+                    elif re.search(r"\binput\s*\(", code):
+                        st.info(
+                            "This program uses input(). Use Analyze for code checking, "
+                            "or run this kind of program in your normal Python environment."
                         )
+                    else:
+                        stdout, stderr, returncode = run_python_code(code)
 
-                        st.markdown("###  Simple explanation")
-                        st.write(explain_runtime_error(error_text))
+                        if returncode == 0:
+                            st.success(" Program finished successfully.")
+                            if stdout.strip():
+                                st.markdown("### Output")
+                                st.code(stdout, language="text")
+                            else:
+                                st.info("The program ran successfully but printed no output.")
+                        else:
+                            error_text = stderr.strip() or stdout.strip() or "Unknown runtime error."
+                            st.error(" Runtime Error")
 
-                        with st.expander("Technical error"):
-                            st.code(error_text, language="text")
+                            st.markdown(
+                                f'''<div class="error-box"><b>Problem:</b><br>{error_text}</div>''',
+                                unsafe_allow_html=True,
+                            )
+
+                            st.markdown("###  Simple Explanation")
+                            st.write(explain_runtime_error(error_text))
+
+                            name_match = re.search(
+                                r"name ['\"]([^'\"]+)['\"] is not defined",
+                                error_text,
+                            )
+
+                            if name_match:
+                                missing = name_match.group(1)
+                                nearest = nearest_defined_name(code, missing)
+
+                                if nearest:
+                                    candidate = replace_name_safely(code, missing, nearest)
+                                    if candidate:
+                                        st.markdown(
+                                            '''<div class="suggestion-box">
+                                            <div class="suggestion-title">✓ SUGGESTION BOX — FULL FIX PREVIEW</div>
+                                            <div class="suggestion-subtitle">Likely variable spelling correction.</div>
+                                            </div>''',
+                                            unsafe_allow_html=True,
+                                        )
+                                        st.code(candidate, language="python")
+
+                            with st.expander("Technical error"):
+                                st.code(error_text, language="text")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ----------------------------
-    # Chatbox
-    # ----------------------------
+    # ========================================================
+    # Chatbox — ORIGINAL FEATURE
+    # ========================================================
     st.markdown("###  Ask PyGuide")
 
     question = st.text_input(
         "Ask a question about Python or your code",
-        placeholder="Example: Why is my code wrong?",
-        key="chat_question_v2",
+        placeholder="Example: Why is print(y) wrong?",
+        key="chat_question_v3",
     )
 
-    if st.button("Send", key="send_chat"):
+    if st.button("Send", key="send_chat_v3"):
         if question.strip():
             answer = chat_response(question, code)
 
@@ -1181,7 +1648,6 @@ with tab1:
             st.markdown(answer)
             st.markdown("</div>", unsafe_allow_html=True)
 
-            # Add a flowchart only when it helps explain the concept.
             q_lower = question.lower()
 
             if (
@@ -1189,119 +1655,125 @@ with tab1:
                 or "conditional" in q_lower
                 or "condition" in q_lower
             ):
-                st.markdown("###  Visual Explanation")
+                st.markdown("### Visual Explanation")
                 st.markdown(
                     """
 ```text
-              START
-                ↓
-        Check the condition
-           ↙          ↘
-        TRUE          FALSE
-          ↓              ↓
-      IF block        ELSE block
-           ↘          ↙
-                ↓
-               END
+START
+  ↓
+Check condition
+  ↙       ↘
+TRUE     FALSE
+ ↓          ↓
+IF block  ELSE block
+  ↘       ↙
+     ↓
+    END
 ```
-"""
+                    """
                 )
 
-            elif (
-                "loop" in q_lower
-                or "for loop" in q_lower
-                or "while loop" in q_lower
-            ):
-                st.markdown("###  Visual Explanation")
+            elif "loop" in q_lower or "for loop" in q_lower or "while loop" in q_lower:
+                st.markdown("### Visual Explanation")
                 st.markdown(
                     """
 ```text
-              START
-                ↓
-        Check loop condition
-           ↙          ↘
-        TRUE          FALSE
-          ↓              ↓
-      Run code          END
-          ↓
-      Repeat/check
-          │
-          └──────────────→
+START
+  ↓
+Check loop condition
+  ↙       ↘
+TRUE     FALSE
+ ↓          ↓
+Run code   END
+ ↓
+Repeat
+ ↺
 ```
-"""
+                    """
                 )
-
-            if any(phrase in question.lower() for phrase in [
-                "correct my code",
-                "fix my code",
-                "give me the correct code",
-                "show correct code",
-                "show me the correct code",
-            ]):
-                corrected, message = get_correct_code(code)
-                if corrected and corrected != code:
-                    st.markdown("###  Suggested Correct Code")
-                    st.code(corrected, language="python")
-                    st.caption("Copy this version into the editor if you want to use the correction.")
         else:
             st.warning("Type a question first.")
+
 
 # ============================================================
 # PSEUDOCODE → PYTHON
 # ============================================================
+
 with tab2:
     st.markdown("##  Convert Pseudocode to Python")
 
     st.write(
-        "Write your logic in simple pseudocode and PyGuide will convert "
-        "supported patterns into Python."
+        "Write your logic in simple pseudocode. PyGuide validates START, END, "
+        "block endings and supported instructions before converting."
     )
 
     pseudocode = st.text_area(
         "Pseudocode",
         height=280,
-        placeholder="""Write your pseudocode...""",
-        key="pseudocode_input_v2",
+        placeholder="""START
+INPUT length
+INPUT width
+SET area = length * width
+OUTPUT area
+END""",
+        key="pseudocode_input_v3",
     )
 
     if st.button(
         " Convert to Python",
         use_container_width=True,
-        key="convert_button",
+        key="convert_button_v3",
     ):
         if not pseudocode.strip():
             st.warning("Please enter pseudocode first.")
         else:
-            pseudo_error = check_pseudocode(pseudocode)
-            if pseudo_error:
+            validation = check_pseudocode(pseudocode)
+
+            if validation["error"]:
                 st.error(" Pseudocode Error")
-                st.write(pseudo_error["message"])
-                st.markdown(
-                    f'<div class="hint-box"><b> Hint:</b> {pseudo_error["hint"]}</div>',
-                    unsafe_allow_html=True,
-                )
+                st.write(validation["error"])
+
+                if validation.get("hint"):
+                    st.markdown(
+                        f'''<div class="hint-box"><b>Hint:</b> {validation["hint"]}</div>''',
+                        unsafe_allow_html=True,
+                    )
             else:
-                python_code, explanation = convert_pseudocode(pseudocode)
+                normalized = validation["normalized"]
+
+                if normalized != pseudocode.strip():
+                    st.caption("PyGuide normalized the pasted pseudocode before checking it.")
+
+                python_code, explanation = convert_pseudocode(normalized)
 
                 st.markdown("###  Python Code")
                 st.code(python_code, language="python")
 
-                st.markdown("###  How PyGuide mapped it")
+                try:
+                    ast.parse(python_code)
+                    st.success(" Generated Python passed syntax validation.")
+                except SyntaxError:
+                    st.warning(" Generated Python still needs review.")
+
+                st.markdown("### How PyGuide mapped it")
                 st.write(explanation)
 
+
 # ============================================================
-# PROJECTS
+# PROJECTS — ORIGINAL FEATURE (without team names)
 # ============================================================
+
 with tab3:
     st.markdown("##  Projects")
 
     st.info(
         "Project saving is planned for the next version. "
-        "For the now, the main focus is debugging and pseudocode conversion."
+        "For now, the main focus is debugging and pseudocode conversion."
     )
 
-    st.markdown("###  PyGuide prototype includes")
+    st.markdown("### PyGuide prototype includes")
     st.write("• Python syntax checking")
+    st.write("• Undefined-name detection")
     st.write("• Beginner-friendly hints")
     st.write("• Suggested syntax corrections")
     st.write("• Runtime error explanations")
@@ -1311,18 +1783,3 @@ with tab3:
 
 st.markdown("---")
 st.caption("PyGuide v2 • Free hackathon prototype • Built with Python + Streamlit")
-
-st.markdown("---")
-
-st.markdown(
-    """
-    <div style="text-align:center; font-size:14px;">
-        <b>Team Scriptforge</b><br><br>
-        P Aishani Vardhan · Founder & Team Lead<br>
-        Sannidhi Shetty · Co-Creator & Pitch Lead<br>
-        B. Naga Harshitha · Developer<br>
-        N. Harshitha · Developer
-    </div>
-    """,
-    unsafe_allow_html=True
-)
