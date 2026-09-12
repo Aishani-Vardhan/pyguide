@@ -664,7 +664,7 @@ def explain_code(code):
         return (
             f"❌ I cannot fully explain the program yet because Python found a syntax "
             f"problem around line {line}.\n\n"
-            f"🧸 **In simple words:** {explain_syntax_error(error)}"
+            f" **In simple words:** {explain_syntax_error(error)}"
         )
 
     explanations = []
@@ -728,7 +728,7 @@ def explain_code(code):
 
     summary = ""
     if summary_parts:
-        summary = "🧸 **What your program does:** It " + ", ".join(summary_parts) + ".\n\n"
+        summary = " **What your program does:** It " + ", ".join(summary_parts) + ".\n\n"
 
     if not explanations:
         explanations.append(
@@ -783,49 +783,49 @@ def chat_response(question, code):
         corrected, message = get_correct_code(code)
         if corrected:
             return (
-                "🔧 **Correct Code**\n\n"
+                " **Correct Code**\n\n"
                 f"{message}\n\n"
                 "The corrected version is shown below."
             )
-        return f"❌ {message}"
+        return f" {message}"
 
     if "indexerror" in q or ("list" in q and ("error" in q or "wrong" in q)):
         return (
-            "### 💡 Let's understand it\n\n"
+            "###  Let's understand it\n\n"
             "`IndexError` means Python tried to access a position in a list "
             "that does not exist. For example, a list with 3 items has indexes "
             "`0`, `1`, and `2`, so asking for index `5` causes this error.\n\n"
             "**What to check:** Look at the index you are using and make sure "
             "it is within the list's valid range.\n\n"
-            "💡 **Tip:** Print the list and check how many items it contains."
+            " **Tip:** Print the list and check how many items it contains."
         )
 
     if "syntax" in q or "colon" in q:
         return (
-            "### 💡 Let's understand it\n\n"
+            "###  Let's understand it\n\n"
             "A **syntax error** means Python cannot understand the structure of "
             "your code. For example, `if`, `for`, `while`, `def`, and `else` "
             "usually need a `:` at the end because it tells Python that a new "
             "block of code is starting.\n\n"
-            "💡 **Tip:** Check the line Python points to and the line immediately "
+            " **Tip:** Check the line Python points to and the line immediately "
             "before it, because the actual mistake can sometimes be just above."
         )
 
     if "nameerror" in q:
         return (
-            "### 💡 Let's understand it\n\n"
+            "###  Let's understand it\n\n"
             "`NameError` usually means Python found a name it does not know. "
             "This often happens when a variable has not been created yet or "
             "its spelling does not match.\n\n"
             "For example, if you create `name` but later write `nmae`, Python "
             "treats them as different names.\n\n"
-            "💡 **What to check:** Make sure the variable is defined before you "
+            " **What to check:** Make sure the variable is defined before you "
             "use it and that its spelling is exactly the same."
         )
 
     if "indent" in q:
         return (
-            "### 💡 Let's understand it\n\n"
+            "###  Let's understand it\n\n"
             "**Indentation** means the spaces at the beginning of a line. "
             "Python uses indentation to know which instructions belong to the "
             "same block.\n\n"
@@ -836,7 +836,7 @@ def chat_response(question, code):
 
     if "if" in q or "else" in q:
         return (
-            "### 💡 Let's understand it\n\n"
+            "###  Let's understand it\n\n"
             "`if` lets a program make a decision based on a condition. "
             "If the condition is true, Python runs the indented code under `if`. "
             "If it is false and an `else` exists, Python runs the `else` block.\n\n"
@@ -847,17 +847,17 @@ def chat_response(question, code):
 
     if "loop" in q or "for" in q or "while" in q:
         return (
-            "### 💡 Let's understand it\n\n"
+            "###  Let's understand it\n\n"
             "A **loop** repeats instructions so you do not have to write the "
             "same code again and again. A `for` loop commonly goes through a "
             "sequence one item at a time. A `while` loop keeps repeating while "
             "its condition is true.\n\n"
-            "💡 **Tip:** Think of a loop as a controlled repetition of a block of code."
+            " **Tip:** Think of a loop as a controlled repetition of a block of code."
         )
 
     if "print" in q:
         return (
-            "### 💡 Let's understand it\n\n"
+            "###  Let's understand it\n\n"
             "`print()` tells Python to display information in the program's "
             "output. For example, `print(\'Hello\')` displays `Hello`.\n\n"
             "It can also display values stored in variables, which makes it "
@@ -866,7 +866,7 @@ def chat_response(question, code):
 
     if "input" in q:
         return (
-            "### 💡 Let's understand it\n\n"
+            "###  Let's understand it\n\n"
             "`input()` allows the user to enter information while the program "
             "is running. For example, `name = input(\'Your name: \')` stores "
             "what the user types in `name`.\n\n"
@@ -881,24 +881,24 @@ def chat_response(question, code):
                 logic_result = check_logic(code)
                 if logic_result["found"]:
                     return (
-                        "✅ Your code has valid basic syntax.\n\n"
-                        f"🧠 **Possible logic issue:** {logic_result['hint']}\n\n"
-                        f"🔧 **Possible fix:** `{logic_result['fix']}`"
+                        " Your code has valid basic syntax.\n\n"
+                        f" **Possible logic issue:** {logic_result['hint']}\n\n"
+                        f" **Possible fix:** `{logic_result['fix']}`"
                     )
                 return (
-                    "✅ Your code has valid basic syntax.\n\n"
+                    " Your code has valid basic syntax.\n\n"
                     "I did not detect one of the common logic patterns in this prototype. "
                     "Try asking **Explain my code** for a beginner-friendly walkthrough."
                 )
             except SyntaxError as error:
                 return (
-                    f"❌ I found a syntax problem around line {error.lineno}.\n\n"
-                    f"🧸 **Simple explanation:** {explain_syntax_error(error)}\n\n"
-                    "💡 Start by checking that line and the line immediately before it."
+                    f" I found a syntax problem around line {error.lineno}.\n\n"
+                    f" **Simple explanation:** {explain_syntax_error(error)}\n\n"
+                    " Start by checking that line and the line immediately before it."
                 )
 
     return (
-        "### 💡 Let's figure it out\n\n"
+        "###  Let's figure it out\n\n"
         "Ask me a Python question and I’ll explain the idea in clear, "
         "student-friendly language without skipping the important concept.\n\n"
         "I can help with variables, lists, `if`/`else`, loops, `input()`, "
@@ -926,7 +926,7 @@ st.markdown(
 # Main navigation
 # ============================================================
 tab1, tab2, tab3 = st.tabs(
-    ["🛠️ AI Debugger", "🔄 Pseudocode → Python", "📁 Projects"]
+    [" AI Debugger", " Pseudocode → Python", " Projects"]
 )
 
 # ============================================================
@@ -938,7 +938,7 @@ with tab1:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("### 💻 Your Python Code")
+        st.markdown("###  Your Python Code")
 
         code = st.text_area(
             "Code editor",
@@ -950,7 +950,7 @@ with tab1:
         )
 
     with col2:
-        st.markdown("### 🤖 PyGuide Assistant")
+        st.markdown("###  PyGuide Assistant")
 
         st.info(
             "PyGuide checks your code, gives a hint first, and then helps you understand the problem."
@@ -960,21 +960,21 @@ with tab1:
 
         with analyze_col:
             analyze = st.button(
-                "🔍 Analyze",
+                " Analyze",
                 use_container_width=True,
                 key="analyze_button",
             )
 
         with logic_col:
             logic = st.button(
-                "🧠 Check Logic",
+                " Check Logic",
                 use_container_width=True,
                 key="logic_button",
             )
 
         with run_col:
             run = st.button(
-                "▶️ Run",
+                " Run",
                 use_container_width=True,
                 key="run_button",
             )
@@ -985,14 +985,14 @@ with tab1:
             else:
                 try:
                     tree = ast.parse(code)
-                    st.success("✅ No basic syntax error found.")
+                    st.success(" No basic syntax error found.")
 
                     if tree.body:
                         logic_result_for_analyze = check_logic(code)
                         if logic_result_for_analyze["found"]:
-                            st.warning(f"🧠 {logic_result_for_analyze['title']}")
+                            st.warning(f" {logic_result_for_analyze['title']}")
                             st.markdown(
-                                f'<div class="hint-box"><b>💡 Hint:</b> '
+                                f'<div class="hint-box"><b> Hint:</b> '
                                 f'{logic_result_for_analyze["hint"]}</div>',
                                 unsafe_allow_html=True,
                             )
@@ -1009,12 +1009,12 @@ with tab1:
                             )
                         else:
                             st.markdown(
-                                '<div class="info-box">💡 Syntax looks good. '
+                                '<div class="info-box"> Syntax looks good. '
                                 'Now try <b>Check Logic</b> or <b>Run</b>.</div>',
                                 unsafe_allow_html=True,
                             )
                 except SyntaxError as error:
-                    st.error("❌ SyntaxError")
+                    st.error(" SyntaxError")
 
                     line = getattr(error, "lineno", "?")
                     column = getattr(error, "offset", "?")
@@ -1026,18 +1026,18 @@ with tab1:
                     )
 
                     st.markdown(
-                        f'<div class="hint-box"><b>💡 Hint:</b> '
+                        f'<div class="hint-box"><b> Hint:</b> '
                         f'Look carefully at line {line}. '
                         f"Try to find what Python's grammar is expecting.</div>",
                         unsafe_allow_html=True,
                     )
 
-                    st.markdown("### 🧸 Simple explanation")
+                    st.markdown("###  Simple explanation")
                     st.write(explain_syntax_error(error))
 
                     correction = suggest_syntax_correction(code, error)
 
-                    st.markdown("### 🔧 Suggested Correct Code")
+                    st.markdown("###  Suggested Correct Code")
                     if correction:
                         st.success("PyGuide found a simple automatic correction.")
                         st.code(correction, language="python")
@@ -1061,10 +1061,10 @@ with tab1:
                 result = check_logic(code)
 
                 if result["found"]:
-                    st.warning(f"🧠 {result['title']}")
+                    st.warning(f" {result['title']}")
 
                     st.markdown(
-                        f'<div class="hint-box"><b>💡 Hint:</b> '
+                        f'<div class="hint-box"><b> Hint:</b> '
                         f'{result["hint"]}</div>',
                         unsafe_allow_html=True,
                     )
@@ -1077,10 +1077,10 @@ with tab1:
                     else:
                         st.code(result["fix"], language="python")
 
-                    st.markdown("### 🧸 Why?")
+                    st.markdown("###  Why?")
                     st.write(result["explanation"])
                 else:
-                    st.success("🧠 No common logic error detected.")
+                    st.success(" No common logic error detected.")
                     st.write(result["explanation"])
 
         elif run:
@@ -1098,7 +1098,7 @@ with tab1:
                     stdout, stderr, returncode = run_python_code(code)
 
                     if returncode == 0:
-                        st.success("✅ Program finished successfully.")
+                        st.success(" Program finished successfully.")
 
                         if stdout.strip():
                             st.markdown("### 📤 Output")
@@ -1107,18 +1107,18 @@ with tab1:
                             st.info("The program ran, but it did not print any output.")
 
                     else:
-                        st.error("❌ Runtime error")
+                        st.error(" Runtime error")
 
                         error_text = stderr.strip() or stdout.strip()
 
                         st.markdown(
-                            '<div class="hint-box"><b>💡 Hint:</b> '
+                            '<div class="hint-box"><b> Hint:</b> '
                             'Read the last part of the error first. '
                             'It usually gives the most useful clue.</div>',
                             unsafe_allow_html=True,
                         )
 
-                        st.markdown("### 🧸 Simple explanation")
+                        st.markdown("###  Simple explanation")
                         st.write(explain_runtime_error(error_text))
 
                         with st.expander("Technical error"):
@@ -1129,7 +1129,7 @@ with tab1:
     # ----------------------------
     # Chatbox
     # ----------------------------
-    st.markdown("### 💬 Ask PyGuide")
+    st.markdown("###  Ask PyGuide")
 
     question = st.text_input(
         "Ask a question about Python or your code",
@@ -1156,7 +1156,7 @@ with tab1:
                 or "conditional" in q_lower
                 or "condition" in q_lower
             ):
-                st.markdown("### 🖼️ Visual Explanation")
+                st.markdown("###  Visual Explanation")
                 st.markdown(
                     """
 ```text
@@ -1179,7 +1179,7 @@ with tab1:
                 or "for loop" in q_lower
                 or "while loop" in q_lower
             ):
-                st.markdown("### 🖼️ Visual Explanation")
+                st.markdown("###  Visual Explanation")
                 st.markdown(
                     """
 ```text
@@ -1207,7 +1207,7 @@ with tab1:
             ]):
                 corrected, message = get_correct_code(code)
                 if corrected and corrected != code:
-                    st.markdown("### 🔧 Suggested Correct Code")
+                    st.markdown("###  Suggested Correct Code")
                     st.code(corrected, language="python")
                     st.caption("Copy this version into the editor if you want to use the correction.")
         else:
@@ -1217,7 +1217,7 @@ with tab1:
 # PSEUDOCODE → PYTHON
 # ============================================================
 with tab2:
-    st.markdown("## 🔄 Convert Pseudocode to Python")
+    st.markdown("##  Convert Pseudocode to Python")
 
     st.write(
         "Write your logic in simple pseudocode and PyGuide will convert "
@@ -1232,7 +1232,7 @@ with tab2:
     )
 
     if st.button(
-        "✨ Convert to Python",
+        " Convert to Python",
         use_container_width=True,
         key="convert_button",
     ):
@@ -1241,33 +1241,33 @@ with tab2:
         else:
             pseudo_error = check_pseudocode(pseudocode)
             if pseudo_error:
-                st.error("❌ Pseudocode Error")
+                st.error(" Pseudocode Error")
                 st.write(pseudo_error["message"])
                 st.markdown(
-                    f'<div class="hint-box"><b>💡 Hint:</b> {pseudo_error["hint"]}</div>',
+                    f'<div class="hint-box"><b> Hint:</b> {pseudo_error["hint"]}</div>',
                     unsafe_allow_html=True,
                 )
             else:
                 python_code, explanation = convert_pseudocode(pseudocode)
 
-                st.markdown("### 🐍 Python Code")
+                st.markdown("###  Python Code")
                 st.code(python_code, language="python")
 
-                st.markdown("### 🧸 How PyGuide mapped it")
+                st.markdown("###  How PyGuide mapped it")
                 st.write(explanation)
 
 # ============================================================
 # PROJECTS
 # ============================================================
 with tab3:
-    st.markdown("## 📁 Projects")
+    st.markdown("##  Projects")
 
     st.info(
         "Project saving is planned for the next version. "
         "For the now, the main focus is debugging and pseudocode conversion."
     )
 
-    st.markdown("### 🚀 PyGuide prototype includes")
+    st.markdown("###  PyGuide prototype includes")
     st.write("• Python syntax checking")
     st.write("• Beginner-friendly hints")
     st.write("• Suggested syntax corrections")
