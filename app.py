@@ -293,132 +293,116 @@ def explain_syntax_error(error):
         )
 
     return "Python found a syntax problem. Check the highlighted line and the lines immediately before it."
-def suggest_syntax_correction(code, error):
-    """Return a corrected full program for common beginner syntax mistakes."""
 
-    lines = code.splitlines()
 
-    if not lines:
+def _verified_program(candidate):
+    """Return candidate only when Python can parse and execute it successfully."""
+    try:
+        ast.parse(candidate)
+    except SyntaxError:
         return None
 
-    # ------------------------------------------------------------
-    # Special case: except ZeroDivisionError without a try block
-    # ------------------------------------------------------------
-    if "except ZeroDivisionError:" in code and "try:" not in code:
-        before_except = []
-        except_found = False
-        fallback_lines = []
+    # Programs containing input() cannot be fully executed non-interactively.
+    # For those, syntax validation is the safe verification available here.
+    if re.search(r"\binput\s*\(", candidate):
+        return candidate
 
-        for line in lines:
-            if line.strip() == "except ZeroDivisionError:":
-                except_found = True
-                continue
+    stdout, stderr, returncode = run_python_code(candidate)
+    if returncode == 0:
+        return candidate
+    return None
 
-            if not except_found:
-                before_except.append(line)
-            else:
-                fallback_lines.append(line)
 
-        # If the user wrote something like:
-        # result = 10 / 0
-        # except ZeroDivisionError:
-        # result = 0
-        # Fallback value
-        #
-        # create a proper try/except structure.
-        if before_except:
-            first_part = "\n".join(before_except).strip()
+def suggest_syntax_correction(code, error):
+    """Return a complete corrected program only when the correction is verified."""
+    if not code.strip():
+        return None
 
-            # Make the demonstration actually produce ZeroDivisionError
-            if "10*0" in first_part:
-                first_part = first_part.replace("10*0", "10 / 0")
-
-            elif "10 * 0" in first_part:
-                first_part = first_part.replace("10 * 0", "10 / 0")
-
-            corrected = "try:\n"
-
-            for line in first_part.splitlines():
-                corrected += "    " + line.strip() + "\n"
-
-            corrected += "except ZeroDivisionError:\n"
-            corrected += "    result = 0\n"
-
-            # Handle any remaining text after except
-            for line in fallback_lines:
-                stripped = line.strip()
-
-                if stripped and stripped != "result=0" and stripped != "result = 0":
-                    corrected += f'\nprint("{stripped}")\n'
-
-            result = corrected.rstrip()
-
-            try:
-                ast.parse(result)
-                return result
-            except SyntaxError:
-                return None
-
-    # ------------------------------------------------------------
-    # General indentation correction
-    # ------------------------------------------------------------
+    # Work on the complete program so multiple beginner mistakes can be fixed
+    # together instead of returning only the line containing the first error.
+    lines = code.splitlines()
     corrected = lines.copy()
 
+    # Common beginner typo: t("...") when asking the user for input.
     for i, line in enumerate(corrected):
-        stripped = line.strip()
+        corrected[i] = re.sub(
+            r'^(\s*[A-Za-z_]\w*\s*=\s*)t(\s*\()',
+            r'\1input\2',
+            corrected[i],
+        )
 
-        if stripped.startswith(("elif ", "else", "except", "finally")):
-            current_indent = len(line) - len(line.lstrip())
+    # Repair a very common malformed f-string where a simple variable inside
+    # { } is missing its closing brace, e.g. {name Welcome -> {name} Welcome.
+    for i, line in enumerate(corrected):
+        if 'f"' in line or "f'" in line:
+            def close_simple_f_expression(match):
+                variable = match.group(1)
+                return '{' + variable + '} ' + match.group(2)
 
-            for j in range(i - 1, -1, -1):
-                previous = corrected[j]
-                previous_stripped = previous.strip()
-                previous_indent = len(previous) - len(previous.lstrip())
+            corrected[i] = re.sub(
+                r'\{([A-Za-z_]\w*)\s+([^{}]+?)(?=["\']\s*\)?\s*$)',
+                close_simple_f_expression,
+                corrected[i],
+            )
 
-                if (
-                    previous_indent <= current_indent
-                    and previous_stripped.startswith(
-                        ("if ", "elif ", "else", "try", "except")
-                    )
-                ):
-                    corrected[i] = " " * previous_indent + stripped
-                    break
-
-    # ------------------------------------------------------------
-    # Add missing colons
-    # ------------------------------------------------------------
+    # Add missing colons to common block statements.
     block_words = (
-        "if ",
-        "elif ",
-        "else",
-        "for ",
-        "while ",
-        "def ",
-        "class ",
-        "try",
-        "except",
-        "finally",
+        "if ", "elif ", "else", "for ", "while ", "def ", "class ",
+        "try", "except", "finally", "with ", "match ", "case "
     )
-
     for i, line in enumerate(corrected):
         stripped = line.strip()
-
         if stripped.startswith(block_words) and not stripped.endswith(":"):
-            corrected[i] = line + ":"
+            corrected[i] = line.rstrip() + ":"
+
+    # Repair simple indentation errors.
+    for i, line in enumerate(corrected):
+        stripped = line.strip()
+        if stripped.startswith(("elif ", "else", "except", "finally")) and i > 0:
+            previous = corrected[i - 1]
+            previous_indent = len(previous) - len(previous.lstrip())
+            corrected[i] = " " * previous_indent + stripped
 
     result = "\n".join(corrected)
 
-    # ------------------------------------------------------------
-    # Make sure the suggested code is actually valid Python
-    # ------------------------------------------------------------
+    # If the first-pass correction is valid and executable, use it.
+    verified = _verified_program(result)
+    if verified and verified != code:
+        return verified
+
+    # Handle missing closing delimiters.
     try:
         ast.parse(result)
-
-        if result != code:
-            return result
-
-    except SyntaxError:
-        return None
+    except SyntaxError as current_error:
+        message = str(getattr(current_error, "msg", "")).lower()
+        if "was never closed" in message:
+            stack = []
+            quote = None
+            escaped = False
+            for ch in result:
+                if escaped:
+                    escaped = False
+                    continue
+                if ch == "\\":
+                    escaped = True
+                    continue
+                if quote:
+                    if ch == quote:
+                        quote = None
+                    continue
+                if ch in ("'", '"'):
+                    quote = ch
+                elif ch in "([{":
+                    stack.append(ch)
+                elif ch in ")]}":
+                    matching = {")": "(", "]": "[", "}": "{"}
+                    if stack and stack[-1] == matching[ch]:
+                        stack.pop()
+            if stack:
+                closing = {"(": ")", "[": "]", "{": "}"}[stack[-1]]
+                verified = _verified_program(result + closing)
+                if verified and verified != code:
+                    return verified
 
     return None
 
@@ -467,6 +451,40 @@ def explain_runtime_error(error_text):
         "Your program ran into a runtime error. "
         "Read the last line of the error first; it usually tells you what went wrong."
     )
+
+
+def suggest_runtime_correction(code, error_text):
+    """Return a complete runtime-corrected program only when verified."""
+    name_match = re.search(r"name ['\"]([^'\"]+)['\"] is not defined", error_text or "")
+    if not name_match:
+        return None
+
+    name = name_match.group(1)
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return None
+
+    # Do not invent a value for an undefined function call.
+    if any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == name
+        for node in ast.walk(tree)
+    ):
+        return None
+
+    lines = code.splitlines()
+    insert_at = 0
+    while insert_at < len(lines):
+        stripped = lines[insert_at].strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith(("import ", "from ")):
+            insert_at += 1
+            continue
+        break
+
+    candidate = "\n".join(lines[:insert_at] + [f"{name} = 0"] + lines[insert_at:])
+    return _verified_program(candidate)
 
 
 def check_logic(code):
@@ -662,7 +680,7 @@ def explain_code(code):
     except SyntaxError as error:
         line = getattr(error, "lineno", "?")
         return (
-            f"❌ I cannot fully explain the program yet because Python found a syntax "
+            f" I cannot fully explain the program yet because Python found a syntax "
             f"problem around line {line}.\n\n"
             f" **In simple words:** {explain_syntax_error(error)}"
         )
@@ -974,7 +992,7 @@ with tab1:
 
         with run_col:
             run = st.button(
-                " Run",
+                "▶️ Run",
                 use_container_width=True,
                 key="run_button",
             )
@@ -987,7 +1005,26 @@ with tab1:
                     tree = ast.parse(code)
                     st.success(" No basic syntax error found.")
 
-                    if tree.body:
+                    stdout, stderr, returncode = run_python_code(code)
+
+                    if returncode != 0 and stderr.strip():
+                        st.error(" Runtime Error")
+                        st.markdown(
+                            f'<div class="error-box"><b>Problem:</b> {stderr.strip()}</div>',
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown("###  Simple explanation")
+                        st.write(explain_runtime_error(stderr))
+
+                        runtime_correction = suggest_runtime_correction(code, stderr)
+                        if runtime_correction:
+                            st.markdown("###  Suggested Correct Code")
+                            st.success("PyGuide fixed the runtime error and verified that this complete program runs without an error.")
+                            st.code(runtime_correction, language="python")
+                            st.caption("This box contains only the complete corrected Python program.")
+                        else:
+                            st.info("PyGuide found the runtime error, but it cannot safely generate a verified full-code correction for this particular error yet.")
+                    elif tree.body:
                         logic_result_for_analyze = check_logic(code)
                         if logic_result_for_analyze["found"]:
                             st.warning(f" {logic_result_for_analyze['title']}")
@@ -999,14 +1036,12 @@ with tab1:
                             corrected_analyze = suggest_logic_correction(
                                 code, logic_result_for_analyze
                             )
-                            st.markdown("### 🔧 Suggested Correct Code")
-                            st.code(
-                                corrected_analyze or logic_result_for_analyze["fix"],
-                                language="python",
-                            )
-                            st.caption(
-                                "You can copy this corrected code or replace the incorrect line."
-                            )
+                            if corrected_analyze:
+                                st.markdown("###  Suggested Correct Code")
+                                st.code(corrected_analyze, language="python")
+                                st.caption("This box contains only the complete corrected Python program.")
+                            else:
+                                st.info("PyGuide detected a possible logic issue, but it cannot safely generate a verified full-code correction for it.")
                         else:
                             st.markdown(
                                 '<div class="info-box"> Syntax looks good. '
@@ -1037,18 +1072,16 @@ with tab1:
 
                     correction = suggest_syntax_correction(code, error)
 
-                    st.markdown("###  Suggested Correct Code")
                     if correction:
-                        st.success("PyGuide found a simple automatic correction.")
+                        st.markdown("###  Suggested Correct Code")
+                        st.success("PyGuide found a corrected version and verified that it runs without an error.")
                         st.code(correction, language="python")
                         st.caption(
-                            "You can copy this corrected code or replace the incorrect line."
+                            "This box contains only the complete corrected Python program."
                         )
                     else:
-                        st.code(code, language="python")
-                        st.caption(
-                            "PyGuide could not automatically rewrite this specific syntax error yet. "
-                            "Use the highlighted line and hint above to make the correction."
+                        st.info(
+                            "PyGuide found the error, but it cannot safely generate a verified full-code correction for this particular mistake yet."
                         )
 
                     with st.expander("Technical error"):
@@ -1069,7 +1102,7 @@ with tab1:
                         unsafe_allow_html=True,
                     )
 
-                    st.markdown("### 🔧 Suggested Correct Code")
+                    st.markdown("###  Suggested Correct Code")
                     corrected_logic = suggest_logic_correction(code, result)
                     if corrected_logic:
                         st.code(corrected_logic, language="python")
@@ -1091,7 +1124,7 @@ with tab1:
                     ast.parse(code)
                 except SyntaxError as error:
                     st.error(
-                        "❌ The program cannot run because it has a syntax error."
+                        " The program cannot run because it has a syntax error."
                     )
                     st.write(explain_syntax_error(error))
                 else:
@@ -1101,7 +1134,7 @@ with tab1:
                         st.success(" Program finished successfully.")
 
                         if stdout.strip():
-                            st.markdown("### 📤 Output")
+                            st.markdown("###  Output")
                             st.code(stdout, language="text")
                         else:
                             st.info("The program ran, but it did not print any output.")
